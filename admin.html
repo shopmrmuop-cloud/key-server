@@ -93,7 +93,9 @@ async function api(path, body) {
   if (body) { opt.method = 'POST'; opt.body = JSON.stringify(body); }
   const r = await fetch(path, opt);
   if (r.status === 401) { logout(); throw new Error('unauth'); }
-  return r.json();
+  const text = await r.text();
+  try { return JSON.parse(text); }
+  catch { return { ok: false, message: 'Server trả về lỗi ' + r.status + ': ' + text.replace(/<[^>]*>/g, ' ').slice(0, 150) }; }
 }
 function logout() { sessionStorage.removeItem('adm'); token = ''; $('app').style.display = 'none'; $('login').style.display = 'block'; }
 function stateOf(k) {
@@ -163,12 +165,17 @@ $('btnLogout').onclick = logout;
 $('btnRefresh').onclick = load;
 $('search').oninput = render; $('filter').onchange = render;
 $('btnCreate').onclick = async () => {
-  const d = await api('/api/admin/create', { duration: $('dur').value, count: parseInt($('count').value, 10) || 1, note: $('note').value });
   const out = $('out');
-  if (!d.ok) { out.style.display = 'block'; out.textContent = d.message || 'Lỗi'; return; }
-  out.style.display = 'block'; out.textContent = d.keys.join('\n');
-  navigator.clipboard && navigator.clipboard.writeText(d.keys.join('\n')).catch(() => {});
-  load();
+  out.style.display = 'block'; out.textContent = 'Đang tạo key, chờ chút (có thể tới 1 phút nếu server mới thức dậy)...';
+  try {
+    const d = await api('/api/admin/create', { duration: $('dur').value, count: parseInt($('count').value, 10) || 1, note: $('note').value });
+    if (!d.ok) { out.textContent = 'LỖI: ' + (d.message || 'không rõ'); return; }
+    out.textContent = d.keys.join('\n');
+    try { navigator.clipboard.writeText(d.keys.join('\n')); } catch (e) {}
+    load();
+  } catch (e) {
+    out.textContent = 'LỖI kết nối: ' + e.message;
+  }
 };
 if (token) enter();
 </script>
