@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lấy key miễn phí</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mut:#8b93a5; --acc:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .card { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; }
+  h1 { font-size:20px; margin:0 0 6px; }
+  p { color:var(--mut); font-size:14px; line-height:1.55; margin:0 0 14px; }
+  ol { color:var(--mut); font-size:14px; line-height:1.7; padding-left:20px; margin:0 0 18px; }
+  b { color:var(--text); }
+  button { width:100%; padding:14px; border:0; border-radius:10px; font-size:16px; font-weight:600; cursor:pointer; color:#fff; background:var(--acc); }
+  button:disabled { opacity:.5; cursor:wait; }
+  #msg { margin-top:14px; font-size:14px; line-height:1.5; color:var(--err); }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Lấy key miễn phí</h1>
+  <p>Key thời hạn <b id="dur">...</b>. Vượt link xong, key sẽ tự hiện ra.</p>
+  <ol>
+    <li>Bấm nút <b>Lấy key</b> bên dưới.</li>
+    <li>Làm theo các bước trên trang vượt link.</li>
+    <li>Trang tự quay về đây và hiện key của bạn.</li>
+  </ol>
+  <button id="btn">Lấy key</button>
+  <div id="msg"></div>
+  <p style="margin:16px 0 0;font-size:13px">Đã có key mà đổi máy? <a href="/">Reset thiết bị</a></p>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const LABEL = { '6h': '6 giờ', '1d': '1 ngày', '3d': '3 ngày', '7d': '7 ngày', '30d': '30 ngày' };
+
+fetch('/api/gate/info').then((r) => r.json()).then((d) => {
+  $('dur').textContent = LABEL[d.duration] || d.duration;
+  if (!d.configured) { $('msg').textContent = 'Chức năng này chưa được bật.'; $('btn').disabled = true; }
+}).catch(() => {});
+
+$('btn').onclick = async () => {
+  $('msg').textContent = ''; $('btn').disabled = true; $('btn').textContent = 'Đang tạo link...';
+  try {
+    const r = await fetch('/api/gate/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const d = await r.json();
+    if (d.ok) { location.href = d.url; return; }
+    $('msg').textContent = d.message || 'Có lỗi, thử lại sau.';
+  } catch (e) {
+    $('msg').textContent = 'Không kết nối được server (nếu server mới thức dậy, chờ 30-60 giây rồi bấm lại).';
+  }
+  $('btn').disabled = false; $('btn').textContent = 'Lấy key';
+};
+</script>
+</body>
+</html>
