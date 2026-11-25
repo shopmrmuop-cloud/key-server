@@ -3,6 +3,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const admin = require('firebase-admin');
 
 const PORT = process.env.PORT || 3000;
@@ -55,7 +56,14 @@ function validDevice(d) {
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Trang web: tự tìm file trong thư mục public, nếu không có thì tìm ngay thư mục ngoài cùng
+function pageFile(name) {
+  const inPublic = path.join(__dirname, 'public', name);
+  return fs.existsSync(inPublic) ? inPublic : path.join(__dirname, name);
+}
+app.get('/', (req, res) => res.sendFile(pageFile('index.html')));
+app.get('/index.html', (req, res) => res.sendFile(pageFile('index.html')));
+app.get('/admin.html', (req, res) => res.sendFile(pageFile('admin.html')));
 
 // Rate limit đơn giản theo IP
 const hits = new Map();
