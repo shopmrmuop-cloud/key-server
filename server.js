@@ -63,6 +63,8 @@ function pageFile(name) {
 }
 app.get('/', (req, res) => res.sendFile(pageFile('index.html')));
 app.get('/index.html', (req, res) => res.sendFile(pageFile('index.html')));
+app.get(['/get', '/get.html'], (req, res) => res.sendFile(pageFile('get.html')));
+app.get(['/claim', '/claim.html'], (req, res) => res.sendFile(pageFile('claim.html')));
 app.get('/admin.html', (req, res) => res.sendFile(pageFile('admin.html')));
 
 // Rate limit đơn giản theo IP
@@ -286,7 +288,137 @@ adminKeyAction('ban', (ref) => ref.update({ status: 'banned' }));
 adminKeyAction('unban', (ref) => ref.update({ status: 'active' }));
 adminKeyAction('delete', (ref) => ref.remove());
 
+// ===== Vượt link lấy key miễn phí =====
+// Luồng: /get (bấm Lấy key) -> trang rút gọn link -> /claim?t=TOKEN -> server tự tạo key.
+// Biến môi trường (tùy chọn, trừ SHORTENER_API_URL):
+//   SHORTENER_API_URL  : URL API của web rút gọn, có chỗ {url}, ví dụ https://link4m.co/api-shorten/v2?api=TOKEN&url={url}
+//   SITE_URL           : link web của bạn, ví dụ https://key-server-p865.onrender.com
+//   FREE_KEY_DURATION  : 6h | 1d | 3d | 7d | 30d (mặc định 1d)
+//   MIN_SECONDS        : số giây tối thiểu từ lúc bấm đến lúc nhận key (mặc định 25)
+//   IP_COOLDOWN_HOURS  : mỗi IP nhận 1 key / bao nhiêu giờ (mặc định 24, 0 = không giới hạn)
+//   STRICT_IP          : 1 = bắt buộc cùng IP lúc bấm và lúc nhận key (mặc định tắt)
+const SHORTENER_API_URL = process.env.SHORTENER_API_URL || 'https://link4m.co/api-shorten/v2?api=6a41f075234afd17497b7953&url={url}';
+const SITE_URL = (process.env.SITE_URL || 'https://key-server-p865.onrender.com').replace(/\/+$/, '');
+const FREE_KEY_DURATION = DURATIONS[process.env.FREE_KEY_DURATION] ? process.env.FREE_KEY_DURATION : '1d';
+const MIN_SECONDS = parseInt(process.env.MIN_SECONDS || '25', 10);
+const IP_COOLDOWN_HOURS = parseFloat(process.env.IP_COOLDOWN_HOURS || '24');
+const STRICT_IP = process.env.STRICT_IP === '1';
+const SESSION_TTL = 60 * 60 * 1000;
+
+function sha(s) {
+  return crypto.createHash('sha256').update(String(s) + ADMIN_PASSWORD).digest('hex').slice(0, 32);
+}
+function clientIp(req) {
+  const cf = req.get('cf-connecting-ip');
+  if (cf) return cf.trim();
+  const xff = req.get('x-forwarded-for');
+  if (xff) return xff.split(',')[0].trim();
+  return req.ip || '';
+}
+
+app.get('/api/gate/info', (req, res) => {
+  res.json({
+    ok: true,
+    configured: !!SHORTENER_API_URL,
+    duration: FREE_KEY_DURATION,
+    cooldownHours: IP_COOLDOWN_HOURS,
+  });
+});
+
+app.post('/api/gate/start', rateLimit(10, 60 * 1000), async (req, res) => {
+  try {
+    if (!SHORTENER_API_URL) return res.json({ ok: false, message: 'Admin chưa cài link vượt (SHORTENER_API_URL).' });
+    const ipHash = sha(clientIp(req));
+    if (IP_COOLDOWN_HOURS > 0) {
+      const last = (await db.ref('ipcool/' + ipHash).once('value')).val();
+      const wait = last ? last + IP_COOLDOWN_HOURS * H - Date.now() : 0;
+      if (wait > 0) {
+        const hours = Math.ceil((wait / H) * 10) / 10;
+        return res.json({ ok: false, message: 'Mạng của bạn vừa nhận key rồi. Thử lại sau ' + hours + ' giờ.' });
+      }
+    }
+    const token = crypto.randomBytes(16).toString('hex');
+    await db.ref('sessions/' + token).set({
+      createdAt: Date.now(),
+      ipHash,
+      uaHash: sha(req.get('user-agent') || ''),
+      used: false,
+    });
+    const base = SITE_URL || (req.protocol + '://' + req.get('host'));
+    const dest = base + '/claim?t=' + token;
+    const apiUrl = SHORTENER_API_URL.replace('{url}', encodeURIComponent(dest));
+    const r = await fetch(apiUrl);
+    const text = await r.text();
+    let link = null;
+    try {
+      const j = JSON.parse(text);
+      link = j.shortenedUrl || j.shortened_url || j.short_url || j.shortUrl || j.url ||
+        (j.data && (j.data.url || j.data.shortenedUrl || j.data.shortened_url)) || null;
+      if (j.status && String(j.status).toLowerCase() === 'error') link = null;
+    } catch (e) {
+      if (/^https?:\/\//i.test(text.trim())) link = text.trim();
+    }
+    if (!link || !/^https?:\/\//i.test(link)) {
+      console.error('SHORTENER RESPONSE:', r.status, text.slice(0, 300));
+      return res.json({ ok: false, message: 'Không tạo được link vượt, báo admin.' });
+    }
+    res.json({ ok: true, url: link });
+  } catch (e) {
+    console.error('GATE START ERROR:', e);
+    res.status(500).json({ ok: false, message: 'Lỗi server' });
+  }
+});
+
+app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
+  const t = String(req.body.t || '');
+  if (!/^[a-f0-9]{32}$/.test(t)) return res.json({ ok: false, message: 'Link không hợp lệ.' });
+  const ipHash = sha(clientIp(req));
+  const uaHash = sha(req.get('user-agent') || '');
+  const now = Date.now();
+  const newKey = genKey();
+  let result = { ok: false, message: 'Link không tồn tại hoặc đã hết hạn.' };
+  try {
+    await db.ref('sessions/' + t).transaction((cur) => {
+      if (cur === null) { result = { ok: false, message: 'Link không tồn tại hoặc đã hết hạn.' }; return null; }
+      if (cur.uaHash !== uaHash || (STRICT_IP && cur.ipHash !== ipHash)) {
+        result = { ok: false, message: 'Hãy mở link bằng đúng trình duyệt bạn đã bấm "Lấy key".' };
+        return;
+      }
+      if (cur.used) { result = { ok: true, key: cur.key, again: true }; return; }
+      if (now - cur.createdAt > SESSION_TTL) { result = { ok: false, message: 'Link đã hết hạn, hãy lấy lại.' }; return; }
+      if (now - cur.createdAt < MIN_SECONDS * 1000) {
+        result = { ok: false, code: 'TOO_FAST', message: 'Bạn vượt link quá nhanh. Hãy làm đủ các bước trên trang vượt link rồi thử lại.' };
+        return;
+      }
+      cur.used = true;
+      cur.key = newKey;
+      cur.usedAt = now;
+      result = { ok: true, key: newKey, created: true };
+      return cur;
+    });
+    if (result.ok && result.created) {
+      try {
+        await db.ref('keys/' + result.key).set({
+          duration: FREE_KEY_DURATION,
+          note: 'free-gate',
+          status: 'active',
+          createdAt: now,
+          resetCount: 0,
+        });
+        if (IP_COOLDOWN_HOURS > 0) await db.ref('ipcool/' + ipHash).set(now);
+      } catch (e) {
+        await db.ref('sessions/' + t).update({ used: false, key: null }).catch(() => {});
+        throw e;
+      }
+    }
+    if (result.ok) result.duration = FREE_KEY_DURATION;
+    res.json(result);
+  } catch (e) {
+    console.error('GATE CLAIM ERROR:', e);
+    res.status(500).json({ ok: false, message: 'Lỗi server' });
+  }
+});
+
 app.get('/health', (req, res) => res.send('ok'));
 
 app.listen(PORT, () => console.log('Key server chạy ở cổng ' + PORT));
-        
