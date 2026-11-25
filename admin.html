@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Admin - Quản lý key</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mut:#8b93a5; --acc:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; --warn:#f5a524; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:16px; }
+  .wrap { max-width:1000px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  input, select { padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:14px; }
+  button { padding:9px 14px; border:0; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; color:#fff; background:var(--acc); }
+  button.sec { background:#2a2f3a; } button.danger { background:#c0392b; } button.warn { background:#b9770e; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #login { max-width:340px; margin:80px auto; }
+  #app { display:none; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--mut); font-weight:600; }
+  .tblwrap { overflow-x:auto; }
+  .tag { padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; }
+  .t-ok { background:#12372a; color:var(--ok); } .t-wait { background:#2a2f3a; color:var(--mut); }
+  .t-exp { background:#3b2a12; color:var(--warn); } .t-ban { background:#3b1a1a; color:var(--err); }
+  code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; cursor:pointer; }
+  #out { white-space:pre; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; margin-top:12px; background:#0f1115; border:1px solid var(--line); border-radius:8px; padding:10px; display:none; }
+  .mut { color:var(--mut); }
+  .acts button { margin:2px 2px 2px 0; padding:5px 8px; font-size:12px; }
+</style>
+</head>
+<body>
+<div id="login" class="card">
+  <h1>Đăng nhập admin</h1>
+  <div class="row"><input type="password" id="pw" placeholder="Mật khẩu admin" style="flex:1"><button id="btnLogin">Vào</button></div>
+  <div id="loginErr" style="color:var(--err);font-size:13px;margin-top:10px"></div>
+</div>
+
+<div id="app" class="wrap">
+  <div class="row" style="justify-content:space-between;margin-bottom:12px">
+    <h1 style="margin:0">Quản lý key</h1>
+    <button class="sec" id="btnLogout">Đăng xuất</button>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <select id="dur">
+        <option value="6h">6 giờ</option>
+        <option value="1d">1 ngày</option>
+        <option value="3d">3 ngày</option>
+        <option value="7d">7 ngày</option>
+        <option value="30d">30 ngày</option>
+      </select>
+      <input type="number" id="count" value="1" min="1" max="100" style="width:80px" title="Số lượng">
+      <input id="note" placeholder="Ghi chú (tên khách...)" style="flex:1;min-width:140px">
+      <button id="btnCreate">Tạo key</button>
+    </div>
+    <div id="out"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px">
+      <input id="search" placeholder="Tìm key / ghi chú..." style="flex:1;min-width:140px">
+      <select id="filter">
+        <option value="">Tất cả</option>
+        <option value="wait">Chưa kích hoạt</option>
+        <option value="ok">Đang hoạt động</option>
+        <option value="exp">Hết hạn</option>
+        <option value="ban">Bị khóa</option>
+      </select>
+      <button class="sec" id="btnRefresh">Làm mới</button>
+    </div>
+    <div class="mut" id="stats" style="font-size:13px;margin-bottom:8px"></div>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>Key</th><th>Loại</th><th>Trạng thái</th><th>Hết hạn</th><th>Thiết bị</th><th>Reset</th><th>Ghi chú</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const DUR = { '6h': '6 giờ', '1d': '1 ngày', '3d': '3 ngày', '7d': '7 ngày', '30d': '30 ngày' };
+let token = sessionStorage.getItem('adm') || '';
+let all = [], maxResets = 3;
+
+async function api(path, body) {
+  const opt = { headers: { 'x-admin-token': token, 'Content-Type': 'application/json' } };
+  if (body) { opt.method = 'POST'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if (r.status === 401) { logout(); throw new Error('unauth'); }
+  return r.json();
+}
+function logout() { sessionStorage.removeItem('adm'); token = ''; $('app').style.display = 'none'; $('login').style.display = 'block'; }
+function stateOf(k) {
+  if (k.status === 'banned') return 'ban';
+  if (k.expired) return 'exp';
+  if (k.activatedAt) return 'ok';
+  return 'wait';
+}
+const LABEL = { ok: 'Hoạt động', wait: 'Chưa dùng', exp: 'Hết hạn', ban: 'Khóa' };
+const CLS = { ok: 't-ok', wait: 't-wait', exp: 't-exp', ban: 't-ban' };
+function fdate(ts) { return ts ? new Date(ts).toLocaleString('vi-VN') : '—'; }
+
+function render() {
+  const q = $('search').value.trim().toLowerCase(), f = $('filter').value;
+  const tbody = $('rows'); tbody.textContent = '';
+  const list = all.filter((k) => (!f || stateOf(k) === f) && (!q || k.key.toLowerCase().includes(q) || k.note.toLowerCase().includes(q)));
+  $('stats').textContent = 'Hiển thị ' + list.length + ' / ' + all.length + ' key';
+  for (const k of list) {
+    const st = stateOf(k);
+    const tr = document.createElement('tr');
+    const td = (child) => { const c = document.createElement('td'); if (typeof child === 'string') c.textContent = child; else if (child) c.appendChild(child); tr.appendChild(c); return c; };
+
+    const code = document.createElement('code'); code.textContent = k.key; code.title = 'Bấm để copy';
+    code.onclick = () => navigator.clipboard.writeText(k.key);
+    td(code);
+    td(DUR[k.duration] || k.duration);
+    const tag = document.createElement('span'); tag.className = 'tag ' + CLS[st]; tag.textContent = LABEL[st]; td(tag);
+    td(fdate(k.expiresAt));
+    td(k.deviceId ? k.deviceId.slice(0, 10) + '…' : '—');
+    td(k.resetCount + '/' + maxResets);
+    td(k.note);
+
+    const acts = document.createElement('div'); acts.className = 'acts';
+    const mk = (text, cls, fn) => { const b = document.createElement('button'); b.textContent = text; if (cls) b.className = cls; b.onclick = fn; acts.appendChild(b); };
+    if (k.deviceId) mk('Reset TB', 'sec', () => act('reset', k.key));
+    if (k.status === 'banned') mk('Mở khóa', 'sec', () => act('unban', k.key));
+    else mk('Khóa', 'warn', () => act('ban', k.key));
+    mk('Xóa', 'danger', () => { if (confirm('Xóa key ' + k.key + '?')) act('delete', k.key); });
+    td(acts);
+    tbody.appendChild(tr);
+  }
+}
+async function act(name, key) {
+  const d = await api('/api/admin/' + name, { key });
+  if (!d.ok) alert(d.message || 'Lỗi');
+  load();
+}
+async function load() {
+  const d = await api('/api/admin/keys');
+  if (!d.ok) return;
+  all = d.keys; maxResets = d.maxResets; render();
+}
+async function enter() {
+  $('login').style.display = 'none'; $('app').style.display = 'block';
+  await load();
+}
+$('btnLogin').onclick = async () => {
+  token = $('pw').value; $('loginErr').textContent = '';
+  try {
+    const r = await fetch('/api/admin/keys', { headers: { 'x-admin-token': token } });
+    if (r.status === 401) { $('loginErr').textContent = 'Sai mật khẩu'; return; }
+    sessionStorage.setItem('adm', token); enter();
+  } catch { $('loginErr').textContent = 'Không kết nối được server'; }
+};
+$('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnLogin').click(); });
+$('btnLogout').onclick = logout;
+$('btnRefresh').onclick = load;
+$('search').oninput = render; $('filter').onchange = render;
+$('btnCreate').onclick = async () => {
+  const d = await api('/api/admin/create', { duration: $('dur').value, count: parseInt($('count').value, 10) || 1, note: $('note').value });
+  const out = $('out');
+  if (!d.ok) { out.style.display = 'block'; out.textContent = d.message || 'Lỗi'; return; }
+  out.style.display = 'block'; out.textContent = d.keys.join('\n');
+  navigator.clipboard && navigator.clipboard.writeText(d.keys.join('\n')).catch(() => {});
+  load();
+};
+if (token) enter();
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reset thiết bị</title>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mut:#8b93a5; --acc:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .card { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { color:var(--mut); font-size:14px; margin:0 0 18px; }
+  input { width:100%; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:16px; letter-spacing:1px; text-transform:uppercase; }
+  input:focus { outline:2px solid var(--acc); border-color:transparent; }
+  .row { display:flex; gap:10px; margin-top:12px; }
+  button { flex:1; padding:12px; border:0; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer; color:#fff; background:var(--acc); }
+  button.sec { background:#2a2f3a; }
+  button:disabled { opacity:.5; cursor:wait; }
+  #msg { margin-top:16px; font-size:14px; line-height:1.5; white-space:pre-line; }
+  .ok { color:var(--ok); } .err { color:var(--err); }
+  .info { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:10px; font-size:14px; color:var(--mut); display:none; }
+  .info b { color:var(--text); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Reset thiết bị</h1>
+  <p class="sub">Nhập key để gỡ thiết bị cũ, sau đó đăng nhập lại trên thiết bị mới.</p>
+  <input id="key" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" autocomplete="off" spellcheck="false">
+  <div class="row">
+    <button class="sec" id="btnCheck">Kiểm tra key</button>
+    <button id="btnReset">Reset thiết bị</button>
+  </div>
+  <div class="info" id="info"></div>
+  <div id="msg"></div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const keyEl = $('key'), msg = $('msg'), info = $('info');
+
+keyEl.addEventListener('input', () => {
+  let v = keyEl.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+  keyEl.value = v.replace(/(.{4})(?=.)/g, '$1-');
+});
+
+function show(text, ok) { msg.className = ok ? 'ok' : 'err'; msg.textContent = text; }
+function fmt(ms) {
+  const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return (d ? d + ' ngày ' : '') + h + ' giờ ' + m + ' phút';
+}
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+function busy(b) { $('btnCheck').disabled = b; $('btnReset').disabled = b; }
+
+$('btnCheck').onclick = async () => {
+  msg.textContent = ''; info.style.display = 'none'; busy(true);
+  try {
+    const d = await post('/api/status', { key: keyEl.value });
+    if (!d.ok) return show(d.message, false);
+    const i = d.info;
+    const status = i.banned ? 'Đã bị khóa' : i.expired ? 'Hết hạn' : i.activated ? 'Đang hoạt động' : 'Chưa kích hoạt';
+    info.innerHTML = 'Trạng thái: <b>' + status + '</b><br>' +
+      (i.activated ? 'Còn lại: <b>' + fmt(i.remainingMs) + '</b><br>' : 'Thời hạn: <b>' + fmt(i.remainingMs) + '</b> (tính từ lần kích hoạt đầu)<br>') +
+      'Thiết bị: <b>' + (i.deviceBound ? 'Đã gắn' : 'Chưa gắn') + '</b><br>' +
+      'Lượt reset còn lại: <b>' + i.resetsLeft + '</b>';
+    info.style.display = 'block';
+  } catch { show('Không kết nối được server', false); }
+  finally { busy(false); }
+};
+
+$('btnReset').onclick = async () => {
+  msg.textContent = ''; busy(true);
+  try {
+    const d = await post('/api/reset', { key: keyEl.value });
+    show(d.message + (d.ok ? '\nLượt reset còn lại: ' + d.resetsLeft : ''), d.ok);
+  } catch { show('Không kết nối được server', false); }
+  finally { busy(false); }
+};
+</script>
+</body>
+</html>
