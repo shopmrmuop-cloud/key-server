@@ -288,22 +288,23 @@ adminKeyAction('ban', (ref) => ref.update({ status: 'banned' }));
 adminKeyAction('unban', (ref) => ref.update({ status: 'active' }));
 adminKeyAction('delete', (ref) => ref.remove());
 
-// ===== Vượt link lấy key miễn phí =====
-// Luồng: /get (bấm Lấy key) -> trang rút gọn link -> /claim?t=TOKEN -> server tự tạo key.
-// Biến môi trường (tùy chọn, trừ SHORTENER_API_URL):
-//   SHORTENER_API_URL  : URL API của web rút gọn, có chỗ {url}, ví dụ https://link4m.co/api-shorten/v2?api=TOKEN&url={url}
-//   SITE_URL           : link web của bạn, ví dụ https://key-server-p865.onrender.com
-//   FREE_KEY_DURATION  : 6h | 1d | 3d | 7d | 30d (mặc định 1d)
-//   MIN_SECONDS        : số giây tối thiểu từ lúc bấm đến lúc nhận key (mặc định 25)
+// ===== Vượt link lấy key miễn phí (vượt 2 link liên tiếp) =====
+// Luồng: /get (bấm Lấy key) -> link rút gọn 1 -> /claim -> link rút gọn 2 -> /claim -> server tạo key.
+// Biến môi trường (tùy chọn):
+//   SHORTENER_API_URL  : URL API của web rút gọn, có chỗ {url}
+//   SITE_URL           : link web của bạn
+//   FREE_KEY_DURATION  : 6h | 1d | 3d | 7d | 30d (mặc định 6h)
+//   MIN_SECONDS        : số giây tối thiểu mỗi lần vượt link (mặc định 25)
 //   IP_COOLDOWN_HOURS  : mỗi IP nhận 1 key / bao nhiêu giờ (mặc định 24, 0 = không giới hạn)
 //   STRICT_IP          : 1 = bắt buộc cùng IP lúc bấm và lúc nhận key (mặc định tắt)
 const SHORTENER_API_URL = process.env.SHORTENER_API_URL || 'https://link4m.co/api-shorten/v2?api=6a41f075234afd17497b7953&url={url}';
 const SITE_URL = (process.env.SITE_URL || 'https://key-server-p865.onrender.com').replace(/\/+$/, '');
-const FREE_KEY_DURATION = DURATIONS[process.env.FREE_KEY_DURATION] ? process.env.FREE_KEY_DURATION : '1d';
+const FREE_KEY_DURATION = DURATIONS[process.env.FREE_KEY_DURATION] ? process.env.FREE_KEY_DURATION : '6h';
 const MIN_SECONDS = parseInt(process.env.MIN_SECONDS || '25', 10);
 const IP_COOLDOWN_HOURS = parseFloat(process.env.IP_COOLDOWN_HOURS || '24');
 const STRICT_IP = process.env.STRICT_IP === '1';
 const SESSION_TTL = 60 * 60 * 1000;
+const GATE_STEPS = 2;
 
 function sha(s) {
   return crypto.createHash('sha256').update(String(s) + ADMIN_PASSWORD).digest('hex').slice(0, 32);
@@ -315,12 +316,37 @@ function clientIp(req) {
   if (xff) return xff.split(',')[0].trim();
   return req.ip || '';
 }
+function siteBase(req) {
+  return SITE_URL || (req.protocol + '://' + req.get('host'));
+}
+
+// Gọi API web rút gọn, trả về link rút gọn (hoặc null nếu lỗi)
+async function makeShortLink(dest) {
+  const apiUrl = SHORTENER_API_URL.replace('{url}', encodeURIComponent(dest));
+  const r = await fetch(apiUrl);
+  const text = await r.text();
+  let link = null;
+  try {
+    const j = JSON.parse(text);
+    link = j.shortenedUrl || j.shortened_url || j.short_url || j.shortUrl || j.url ||
+      (j.data && (j.data.url || j.data.shortenedUrl || j.data.shortened_url)) || null;
+    if (j.status && String(j.status).toLowerCase() === 'error') link = null;
+  } catch (e) {
+    if (/^https?:\/\//i.test(text.trim())) link = text.trim();
+  }
+  if (!link || !/^https?:\/\//i.test(link)) {
+    console.error('SHORTENER RESPONSE:', r.status, text.slice(0, 300));
+    return null;
+  }
+  return link;
+}
 
 app.get('/api/gate/info', (req, res) => {
   res.json({
     ok: true,
     configured: !!SHORTENER_API_URL,
     duration: FREE_KEY_DURATION,
+    steps: GATE_STEPS,
     cooldownHours: IP_COOLDOWN_HOURS,
   });
 });
@@ -338,30 +364,17 @@ app.post('/api/gate/start', rateLimit(10, 60 * 1000), async (req, res) => {
       }
     }
     const token = crypto.randomBytes(16).toString('hex');
+    const now = Date.now();
     await db.ref('sessions/' + token).set({
-      createdAt: Date.now(),
+      createdAt: now,
+      stage: 1,
+      stageAt: now,
       ipHash,
       uaHash: sha(req.get('user-agent') || ''),
       used: false,
     });
-    const base = SITE_URL || (req.protocol + '://' + req.get('host'));
-    const dest = base + '/claim?t=' + token;
-    const apiUrl = SHORTENER_API_URL.replace('{url}', encodeURIComponent(dest));
-    const r = await fetch(apiUrl);
-    const text = await r.text();
-    let link = null;
-    try {
-      const j = JSON.parse(text);
-      link = j.shortenedUrl || j.shortened_url || j.short_url || j.shortUrl || j.url ||
-        (j.data && (j.data.url || j.data.shortenedUrl || j.data.shortened_url)) || null;
-      if (j.status && String(j.status).toLowerCase() === 'error') link = null;
-    } catch (e) {
-      if (/^https?:\/\//i.test(text.trim())) link = text.trim();
-    }
-    if (!link || !/^https?:\/\//i.test(link)) {
-      console.error('SHORTENER RESPONSE:', r.status, text.slice(0, 300));
-      return res.json({ ok: false, message: 'Không tạo được link vượt, báo admin.' });
-    }
+    const link = await makeShortLink(siteBase(req) + '/claim?t=' + token);
+    if (!link) return res.json({ ok: false, message: 'Không tạo được link vượt, báo admin.' });
     res.json({ ok: true, url: link });
   } catch (e) {
     console.error('GATE START ERROR:', e);
@@ -371,11 +384,16 @@ app.post('/api/gate/start', rateLimit(10, 60 * 1000), async (req, res) => {
 
 app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
   const t = String(req.body.t || '');
-  if (!/^[a-f0-9]{32}$/.test(t)) return res.json({ ok: false, message: 'Link không hợp lệ.' });
+  const k = String(req.body.k || '');
+  if (!/^[a-f0-9]{32}$/.test(t) || (k && !/^[a-f0-9]{32}$/.test(k))) {
+    return res.json({ ok: false, message: 'Link không hợp lệ.' });
+  }
   const ipHash = sha(clientIp(req));
   const uaHash = sha(req.get('user-agent') || '');
   const now = Date.now();
   const newKey = genKey();
+  const newT2 = crypto.randomBytes(16).toString('hex');
+  const TOO_FAST = { ok: false, code: 'TOO_FAST', message: 'Bạn vượt link quá nhanh. Hãy làm đủ các bước trên trang vượt link rồi thử lại.' };
   let result = { ok: false, message: 'Link không tồn tại hoặc đã hết hạn.' };
   try {
     await db.ref('sessions/' + t).transaction((cur) => {
@@ -386,16 +404,45 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
       }
       if (cur.used) { result = { ok: true, key: cur.key, again: true }; return; }
       if (now - cur.createdAt > SESSION_TTL) { result = { ok: false, message: 'Link đã hết hạn, hãy lấy lại.' }; return; }
-      if (now - cur.createdAt < MIN_SECONDS * 1000) {
-        result = { ok: false, code: 'TOO_FAST', message: 'Bạn vượt link quá nhanh. Hãy làm đủ các bước trên trang vượt link rồi thử lại.' };
+      const stage = cur.stage || 1;
+      const waited = now - (cur.stageAt || cur.createdAt);
+
+      if (stage === 1) {
+        if (waited < MIN_SECONDS * 1000) { result = TOO_FAST; return; }
+        cur.stage = 2;
+        cur.stageAt = now;
+        cur.t2 = newT2;
+        cur.link2 = null;
+        result = { ok: true, advanced: true, t2: newT2 };
+        return cur;
+      }
+
+      // stage 2: phải có đúng mã k từ link thứ hai
+      if (k !== cur.t2) {
+        if (cur.link2) result = { ok: true, next: true, url: cur.link2, step: 1, total: GATE_STEPS };
+        else result = { ok: false, message: 'Đang chuẩn bị link thứ hai, thử lại sau vài giây.' };
         return;
       }
+      if (waited < MIN_SECONDS * 1000) { result = TOO_FAST; return; }
       cur.used = true;
       cur.key = newKey;
       cur.usedAt = now;
       result = { ok: true, key: newKey, created: true };
       return cur;
     });
+
+    // Vừa xong link 1: tạo link rút gọn thứ hai
+    if (result.ok && result.advanced) {
+      const link2 = await makeShortLink(siteBase(req) + '/claim?t=' + t + '&k=' + result.t2);
+      if (!link2) {
+        await db.ref('sessions/' + t).update({ stage: 1, stageAt: now, t2: null, link2: null }).catch(() => {});
+        return res.json({ ok: false, message: 'Không tạo được link thứ hai, thử lại sau.' });
+      }
+      await db.ref('sessions/' + t).update({ link2 });
+      return res.json({ ok: true, next: true, url: link2, step: 1, total: GATE_STEPS });
+    }
+
+    // Vừa xong link 2: tạo key thật
     if (result.ok && result.created) {
       try {
         await db.ref('keys/' + result.key).set({
@@ -411,7 +458,7 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
         throw e;
       }
     }
-    if (result.ok) result.duration = FREE_KEY_DURATION;
+    if (result.ok && result.key) result.duration = FREE_KEY_DURATION;
     res.json(result);
   } catch (e) {
     console.error('GATE CLAIM ERROR:', e);
