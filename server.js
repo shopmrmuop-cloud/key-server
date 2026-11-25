@@ -230,8 +230,8 @@ app.post('/api/admin/create', adminAuth, async (req, res) => {
     await db.ref().update(updates);
     res.json({ ok: true, keys: created });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ ok: false, message: 'Lỗi server' });
+    console.error('CREATE KEY ERROR:', e);
+    res.status(500).json({ ok: false, message: 'Lỗi server: ' + (e && e.message ? e.message : String(e)) });
   }
 });
 
@@ -289,3 +289,4 @@ adminKeyAction('delete', (ref) => ref.remove());
 app.get('/health', (req, res) => res.send('ok'));
 
 app.listen(PORT, () => console.log('Key server chạy ở cổng ' + PORT));
+        
