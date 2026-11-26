@@ -118,15 +118,15 @@ input:disabled{opacity:.6}
     NOT_FOUND: ['Key không tồn tại', 'err'], BAD_KEY_FORMAT: ['Key sai định dạng', 'err'],
     EXPIRED: ['Key đã hết hạn', 'err'], BANNED: ['Key đã bị khóa', 'err'],
     MAINTENANCE: ['Hệ thống đang bảo trì', 'warn'], FROZEN: ['Key đang tạm dừng', 'warn'],
-    DEVICE_MISMATCH: ['Key đã đủ thiết bị', 'err'], BAD_DEVICE: ['Thiếu mã thiết bị', 'warn']
+    DEVICE_MISMATCH: ['Key đã đủ thiết bị', 'err'], BAD_DEVICE: ['Mã thiết bị không hợp lệ', 'warn']
   };
 
   if (IN_APP) {
     say('warn', 'Hãy mở bằng Chrome', 'Trình duyệt trong Zalo/Facebook/Telegram không mở được app. Bấm dấu ⋮ hoặc “Mở bằng trình duyệt” rồi chọn Chrome.');
   }
-  if (!deviceId) {
-    go.disabled = true; inp.disabled = true;
-    say('warn', 'Hãy mở trang này từ app', 'Mở app Mr.mướp VIP rồi bấm nút “Xác minh trên website” để trang nhận được mã thiết bị của bạn.');
+  // Không có mã thiết bị (mở website trực tiếp): vẫn nhập key được; app sẽ gắn thiết bị khi nhận vé.
+  if (!deviceId && !IN_APP) {
+    say('ok', 'Chế độ website', 'Nhập key rồi bấm nút bên dưới. Máy bạn cần cài sẵn app Mr.mướp VIP V18 để mở app.');
   }
 
   // Tự chèn dấu gạch ngang: XXXX-XXXX-XXXX-XXXX
@@ -196,7 +196,7 @@ input:disabled{opacity:.6}
     var ctl = new AbortController(); var to = setTimeout(function () { ctl.abort(); }, 20000);
     fetch(API_BASE + '/api/web/verify', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', credentials: 'omit',
-      body: JSON.stringify({ key: key, deviceId: deviceId }), signal: ctl.signal
+      body: JSON.stringify(deviceId ? { key: key, deviceId: deviceId } : { key: key }), signal: ctl.signal
     }).then(function (r) {
       if (r.status === 429) return { ok: false, code: 'RATE', message: 'Bạn thao tác quá nhanh, hãy chờ một lát rồi thử lại.' };
       return r.json();

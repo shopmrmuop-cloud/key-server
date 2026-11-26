@@ -715,24 +715,38 @@ app.use('/api/web', (req, res, next) => {
   next();
 });
 
+// Kiểm tra key chỉ-đọc cho website mở trực tiếp (chưa biết thiết bị): KHÔNG kích hoạt, KHÔNG chiếm slot thiết bị.
+// Việc kích hoạt + gắn thiết bị + giới hạn thiết bị được thực hiện khi app đổi vé (/api/auth/exchange) bằng runVerify.
+async function peekKey(key) {
+  const now = Date.now();
+  const [snap, freeze] = await Promise.all([db.ref('keys/' + key).once('value'), getFreeze()]);
+  const k = snap.exists() ? snap.val() : null;
+  if (!k) return { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' };
+  if (k.status === 'banned') return { ok: false, code: 'BANNED', message: 'Key đã bị khóa' };
+  if (freeze) return { ok: false, code: 'MAINTENANCE', message: 'Hệ thống đang bảo trì, thời gian key được tạm dừng. Vui lòng quay lại sau.' };
+  if (k.frozenAt) return { ok: false, code: 'FROZEN', message: 'Key đang được tạm dừng (thời gian không bị tính). Liên hệ admin.' };
+  if (k.activatedAt && now > k.expiresAt) return { ok: false, code: 'EXPIRED', message: 'Key đã hết hạn' };
+  return { ok: true, code: 'OK', message: 'Key hợp lệ', info: publicInfo(k, now, null) };
+}
+
 // A. POST /api/web/verify {key, deviceId} -> {ok, ticket, ticketTtlSec, info}
 app.post('/api/web/verify', rateLimit(20, 60 * 1000), async (req, res) => {
   const key = normKey(req.body.key);
   const deviceId = req.body.deviceId;
   if (!validKeyFormat(key)) return res.json({ ok: false, code: 'BAD_KEY_FORMAT', message: 'Key sai định dạng (dạng XXXX-XXXX-XXXX-XXXX).' });
-  if (!validDevice(deviceId)) return res.json({ ok: false, code: 'BAD_DEVICE', message: 'Thiếu mã thiết bị. Hãy mở trang này bằng nút trong app Mr.mướp VIP.' });
+  // Có deviceId (mở từ nút trong app): vé gắn thiết bị. Không có (mở website trực tiếp): vé "chưa gắn", app gắn khi đổi vé.
+  const hasDevice = deviceId !== undefined && deviceId !== null && deviceId !== '';
+  if (hasDevice && !validDevice(deviceId)) return res.json({ ok: false, code: 'BAD_DEVICE', message: 'Mã thiết bị không hợp lệ. Hãy mở trang này bằng nút trong app Mr.mướp VIP.' });
   try {
-    const r = await runVerify(key, deviceId); // kiểm tra khóa/hạn/bảo trì/đóng băng/giới hạn thiết bị + kích hoạt như /api/verify
+    const r = hasDevice
+      ? await runVerify(key, deviceId) // kiểm tra khóa/hạn/bảo trì/đóng băng/giới hạn thiết bị + kích hoạt như /api/verify
+      : await peekKey(key);
     if (!r.ok) return res.json({ ok: false, code: r.code, message: r.message });
     const ticket = randHex(32);
     const now = Date.now();
-    await db.ref('authTickets/' + tokenId(ticket)).set({
-      key,
-      deviceId,
-      createdAt: now,
-      expiresAt: now + TICKET_TTL_MS,
-      used: false,
-    });
+    const rec = { key, createdAt: now, expiresAt: now + TICKET_TTL_MS, used: false };
+    if (hasDevice) rec.deviceId = deviceId; else rec.unbound = true;
+    await db.ref('authTickets/' + tokenId(ticket)).set(rec);
     res.json({ ok: true, code: 'OK', message: r.message, ticket, ticketTtlSec: Math.round(TICKET_TTL_MS / 1000), info: r.info });
   } catch (e) {
     console.error('WEB VERIFY ERROR:', e);
@@ -750,20 +764,29 @@ app.post('/api/auth/exchange', rateLimit(30, 60 * 1000), async (req, res) => {
   const now = Date.now();
   let result = { ok: false, code: 'TICKET_INVALID', message: 'Vé không tồn tại' };
   let keyName = null;
+  let unboundTicket = false;
   try {
     // Giao dịch nguyên tử: chỉ 1 request duy nhất đổi được vé, các request sau (hoặc song song) đều bị từ chối
     await db.ref('authTickets/' + tokenId(ticket)).transaction((cur) => {
       if (cur === null) { result = { ok: false, code: 'TICKET_INVALID', message: 'Vé không tồn tại' }; return null; }
       if (cur.used) { result = { ok: false, code: 'TICKET_USED', message: 'Vé đã được sử dụng. Hãy xác minh lại trên website.' }; return; }
       if (now > cur.expiresAt) { result = { ok: false, code: 'TICKET_EXPIRED', message: 'Vé đã hết hạn. Hãy xác minh lại trên website.' }; return; }
-      if (cur.deviceId !== deviceId) { result = { ok: false, code: 'TICKET_DEVICE_MISMATCH', message: 'Vé không thuộc thiết bị này.' }; return; }
+      if (!cur.unbound && cur.deviceId !== deviceId) { result = { ok: false, code: 'TICKET_DEVICE_MISMATCH', message: 'Vé không thuộc thiết bị này.' }; return; }
       cur.used = true;
       cur.usedAt = now;
+      if (cur.unbound) cur.deviceId = deviceId; // vé mở từ website trực tiếp: gắn thiết bị của app đang đổi vé
       keyName = cur.key;
+      unboundTicket = !!cur.unbound;
       result = { ok: true };
       return cur;
     });
     if (!result.ok) return res.json(result);
+
+    // Vé từ website mở trực tiếp: kích hoạt key + gắn thiết bị + kiểm tra giới hạn thiết bị tại đây (cùng logic /api/verify)
+    if (unboundTicket) {
+      const r = await runVerify(keyName, deviceId);
+      if (!r.ok) return res.json({ ok: false, code: r.code, message: r.message });
+    }
 
     // Kiểm tra lại key ngay lúc đổi (key có thể vừa bị khóa/bảo trì sau khi cấp vé)
     const [snap, freeze] = await Promise.all([db.ref('keys/' + keyName).once('value'), getFreeze()]);
