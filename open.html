@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#04100c">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<title>Mr.mướp VIP • Xác minh key</title>
+<style>
+:root{--bg:#030907;--card:#071611;--line:#12372b;--g:#00e676;--g2:#14f1b2;--tx:#e8fff5;--mu:#7fa393;--err:#ff5c6c;--warn:#ffc044}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%}
+body{background:radial-gradient(900px 500px at 50% -10%,#0b3a2a 0,transparent 65%),linear-gradient(#030907,#020504);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;justify-content:center;padding:max(20px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom))}
+body:before{content:"";position:fixed;inset:0;background:linear-gradient(rgba(0,230,118,.05) 1px,transparent 1px) 0 0/34px 34px,linear-gradient(90deg,rgba(0,230,118,.05) 1px,transparent 1px) 0 0/34px 34px;-webkit-mask-image:radial-gradient(circle at 50% 30%,#000,transparent 70%);mask-image:radial-gradient(circle at 50% 30%,#000,transparent 70%);pointer-events:none}
+main{position:relative;width:100%;max-width:400px}
+.brand{text-align:center;margin-bottom:20px}
+.logo{width:74px;height:74px;margin:0 auto 10px;filter:drop-shadow(0 0 18px rgba(0,230,118,.45))}
+h1{margin:0;font-size:28px;letter-spacing:.5px}
+h1 span{background:linear-gradient(90deg,var(--g),var(--g2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.tag{display:inline-block;margin-top:6px;padding:3px 12px;border:1px solid var(--line);border-radius:99px;color:var(--g2);font-size:12px;letter-spacing:1.5px;background:rgba(0,230,118,.06)}
+.card{background:linear-gradient(180deg,rgba(10,32,24,.92),rgba(5,16,12,.96));border:1px solid var(--line);border-radius:20px;padding:22px 18px;box-shadow:0 0 0 1px rgba(0,230,118,.04),0 20px 50px rgba(0,0,0,.55)}
+label{display:block;font-size:13px;color:var(--mu);margin:0 0 8px;letter-spacing:.4px}
+input{width:100%;height:52px;padding:0 14px;background:#020a07;border:1px solid var(--line);border-radius:14px;color:var(--tx);font:600 18px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:1.5px;text-align:center;outline:0;transition:border-color .2s,box-shadow .2s}
+input::placeholder{color:#3b5c4f;letter-spacing:1px}
+input:focus{border-color:var(--g);box-shadow:0 0 0 3px rgba(0,230,118,.15)}
+input:disabled{opacity:.6}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:52px;margin-top:14px;border:0;border-radius:14px;background:linear-gradient(90deg,var(--g),var(--g2));color:#022014;font:800 15px/1 inherit;letter-spacing:1px;cursor:pointer;text-decoration:none;box-shadow:0 8px 24px rgba(0,230,118,.28);transition:transform .1s,opacity .2s}
+.btn:active{transform:scale(.98)}
+.btn[disabled]{opacity:.45;cursor:not-allowed;box-shadow:none}
+.btn.ghost{background:transparent;color:var(--g2);border:1px solid var(--line);box-shadow:none}
+.spin{width:18px;height:18px;border:3px solid rgba(2,32,20,.3);border-top-color:#022014;border-radius:50%;animation:r .8s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+.st{display:none;margin-top:14px;padding:12px 14px;border-radius:12px;font-size:14px;line-height:1.45;border:1px solid}
+.st.show{display:block}
+.st b{display:block;margin-bottom:2px;font-size:14px}
+.st.err{color:#ffd5da;background:rgba(255,92,108,.1);border-color:rgba(255,92,108,.4)}
+.st.err b{color:var(--err)}
+.st.warn{color:#ffe9b8;background:rgba(255,192,68,.09);border-color:rgba(255,192,68,.4)}
+.st.warn b{color:var(--warn)}
+.st.ok{color:#c9ffe4;background:rgba(0,230,118,.09);border-color:rgba(0,230,118,.4)}
+.st.ok b{color:var(--g)}
+.st.info{color:var(--mu);background:rgba(20,241,178,.06);border-color:var(--line)}
+.hide{display:none!important}
+.count{margin-top:12px;text-align:center;color:var(--mu);font-size:13px}
+.count em{color:var(--g2);font-style:normal;font-weight:700}
+.foot{margin-top:16px;text-align:center;color:#4f7466;font-size:12px;line-height:1.6}
+.foot i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--g);margin-right:6px;box-shadow:0 0 8px var(--g)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 80 80" aria-hidden="true">
+      <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e676"/><stop offset="1" stop-color="#14f1b2"/></linearGradient></defs>
+      <path d="M40 4 70 15v23c0 19-12 32-30 38C22 70 10 57 10 38V15z" fill="#06150f" stroke="url(#lg)" stroke-width="3"/>
+      <path d="M24 52V28l16 16 16-16v24" fill="none" stroke="url(#lg)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1>Mr.<span>mướp</span></h1>
+    <div class="tag">VIP V18 • SECURE ACCESS</div>
+  </div>
+
+  <section class="card">
+    <form id="f" autocomplete="off" novalidate>
+      <label for="k">KEY CỦA BẠN</label>
+      <input id="k" name="k" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="19" placeholder="XXXX-XXXX-XXXX-XXXX" aria-describedby="st">
+      <button id="go" class="btn" type="submit"><span id="gol">XÁC MINH VÀ MỞ APP</span></button>
+    </form>
+
+    <div id="ok" class="hide">
+      <a id="open" class="btn" href="#">MỞ ỨNG DỤNG MR.MƯỚP VIP</a>
+      <div class="count">Vé hết hạn sau <em id="cd">0</em> giây</div>
+      <button id="again" class="btn ghost hide" type="button">NHẬP KEY LẠI</button>
+    </div>
+
+    <div id="st" class="st" role="status" aria-live="polite"></div>
+  </section>
+
+  <div class="foot"><i></i>Vé đăng nhập chỉ dùng 1 lần, gắn với thiết bị của bạn.<br>Key không bao giờ được đưa vào đường dẫn mở app.</div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  // ====== CẤU HÌNH ======
+  var API_BASE = '';                       // để trống nếu website nằm cùng domain với server; hosting riêng thì điền https://domain-server (và đặt WEB_ORIGIN trên server)
+  var APP_SCHEME = 'muopvip';              // phải khớp intent-filter trong AndroidManifest.xml
+  var APP_PACKAGE = 'com.ponie.delayx';
+  // ======================
+  var $ = function (id) { return document.getElementById(id); };
+  var form = $('f'), inp = $('k'), go = $('go'), gol = $('gol'), st = $('st'), okBox = $('ok');
+  var timer = null, busy = false, deviceId = '';
+
+  // deviceId do app truyền sang (không bí mật, chỉ để gắn vé với đúng thiết bị) – xóa khỏi thanh địa chỉ ngay
+  try {
+    var q = new URLSearchParams(location.search).get('d') || '';
+    if (/^[A-Za-z0-9_-]{4,200}$/.test(q)) { deviceId = q; try { sessionStorage.setItem('mdid', q); } catch (e) {} }
+    else { try { deviceId = sessionStorage.getItem('mdid') || ''; } catch (e) {} }
+    if (location.search) history.replaceState(null, '', location.pathname);
+  } catch (e) {}
+
+  function say(type, title, msg) {
+    st.className = 'st show ' + type;
+    st.innerHTML = '';
+    var b = document.createElement('b'); b.textContent = title; st.appendChild(b);
+    if (msg) st.appendChild(document.createTextNode(msg));
+  }
+  function clearSay() { st.className = 'st'; st.textContent = ''; }
+  function setBusy(v) {
+    busy = v; inp.disabled = v; go.disabled = v;
+    gol.textContent = '';
+    if (v) { var s = document.createElement('span'); s.className = 'spin'; gol.appendChild(s); gol.appendChild(document.createTextNode(' ĐANG XÁC MINH...')); }
+    else gol.textContent = 'XÁC MINH VÀ MỞ APP';
+  }
+
+  var TITLES = {
+    NOT_FOUND: ['Key không tồn tại', 'err'], BAD_KEY_FORMAT: ['Key sai định dạng', 'err'],
+    EXPIRED: ['Key đã hết hạn', 'err'], BANNED: ['Key đã bị khóa', 'err'],
+    MAINTENANCE: ['Hệ thống đang bảo trì', 'warn'], FROZEN: ['Key đang tạm dừng', 'warn'],
+    DEVICE_MISMATCH: ['Key đã đủ thiết bị', 'err'], BAD_DEVICE: ['Thiếu mã thiết bị', 'warn']
+  };
+
+  if (!deviceId) {
+    go.disabled = true; inp.disabled = true;
+    say('warn', 'Hãy mở trang này từ app', 'Mở app Mr.mướp VIP rồi bấm nút “Xác minh trên website” để trang nhận được mã thiết bị của bạn.');
+  }
+
+  // Tự chèn dấu gạch ngang: XXXX-XXXX-XXXX-XXXX
+  inp.addEventListener('input', function () {
+    var raw = inp.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+    inp.value = raw.replace(/(.{4})(?=.)/g, '$1-');
+    if (st.classList.contains('err')) clearSay();
+  });
+
+  function openApp(ticket) {
+    var q = 'ticket=' + encodeURIComponent(ticket);
+    var isChrome = /Android/i.test(navigator.userAgent) && /Chrome\//.test(navigator.userAgent);
+    var url = isChrome
+      ? 'intent://auth?' + q + '#Intent;scheme=' + APP_SCHEME + ';package=' + APP_PACKAGE + ';end'
+      : APP_SCHEME + '://auth?' + q;
+    $('open').href = url;
+    setTimeout(function () { location.href = url; }, 350);   // tự mở; nếu trình duyệt chặn thì người dùng bấm nút
+  }
+
+  function showSuccess(ticket, ttl) {
+    form.classList.add('hide'); okBox.classList.remove('hide');
+    $('again').classList.add('hide'); $('open').classList.remove('hide');
+    say('ok', 'Xác minh thành công', 'Đang mở ứng dụng… Nếu app chưa tự mở, bấm nút bên dưới.');
+    var left = ttl; $('cd').textContent = left;
+    clearInterval(timer);
+    timer = setInterval(function () {
+      left--; $('cd').textContent = Math.max(left, 0);
+      if (left <= 0) {
+        clearInterval(timer);
+        $('open').href = '#'; $('open').classList.add('hide');
+        $('again').classList.remove('hide');
+        say('warn', 'Vé đã hết hạn', 'Vì an toàn, vé chỉ dùng được trong ' + ttl + ' giây. Hãy nhập key để tạo vé mới.');
+      }
+    }, 1000);
+    openApp(ticket);
+  }
+
+  $('again').addEventListener('click', function () {
+    okBox.classList.add('hide'); form.classList.remove('hide'); clearSay(); inp.value = ''; inp.focus();
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (busy) return;
+    var key = inp.value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}(-[A-Z0-9]{4}){3}$/.test(key)) { say('err', 'Key sai định dạng', 'Key gồm 16 ký tự dạng XXXX-XXXX-XXXX-XXXX.'); inp.focus(); return; }
+    clearSay(); setBusy(true);
+    var ctl = new AbortController(); var to = setTimeout(function () { ctl.abort(); }, 20000);
+    fetch(API_BASE + '/api/web/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store', credentials: 'omit',
+      body: JSON.stringify({ key: key, deviceId: deviceId }), signal: ctl.signal
+    }).then(function (r) {
+      if (r.status === 429) return { ok: false, code: 'RATE', message: 'Bạn thao tác quá nhanh, hãy chờ một lát rồi thử lại.' };
+      return r.json();
+    }).then(function (d) {
+      if (d && d.ok && d.ticket) { inp.value = ''; showSuccess(d.ticket, d.ticketTtlSec || 60); return; }
+      var t = TITLES[d && d.code] || ['Không thể xác minh', 'err'];
+      say(t[1], t[0], (d && d.message) || 'Vui lòng thử lại.');
+    }).catch(function () {
+      say('err', 'Không kết nối được server', 'Kiểm tra mạng rồi thử lại. Server miễn phí có thể mất ~30 giây để thức dậy.');
+    }).then(function () { clearTimeout(to); setBusy(false); });
+  });
+})();
+</script>
+</body>
+</html>

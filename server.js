@@ -83,6 +83,16 @@ app.get('/index.html', (req, res) => res.sendFile(pageFile('index.html')));
 app.get(['/get', '/get.html'], (req, res) => res.sendFile(pageFile('get.html')));
 app.get(['/claim', '/claim.html'], (req, res) => res.sendFile(pageFile('claim.html')));
 app.get('/admin.html', (req, res) => res.sendFile(pageFile('admin.html')));
+// Trang xác minh key -> mở app (V18). Không cache, không cho nhúng iframe, không gửi referrer.
+app.get(['/open', '/open.html'], (req, res) => {
+  res.set({
+    'Cache-Control': 'no-store',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.sendFile(pageFile('open.html'));
+});
 
 // Rate limit đơn giản theo IP
 const hits = new Map();
@@ -135,64 +145,69 @@ function publicInfo(k, now, freeze) {
 }
 
 // ===== API cho app/tool của bạn gọi =====
-// POST /api/verify {key, deviceId}
+// Lõi xác minh key (dùng chung cho /api/verify cũ và /api/web/verify mới) – logic giữ nguyên như bản cũ.
+async function runVerify(key, deviceId) {
+  const now = Date.now();
+  let result = { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' };
+  const freeze = await getFreeze();
+  await db.ref('keys/' + key).transaction((cur) => {
+    if (cur === null) { result = { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' }; return null; }
+    if (cur.status === 'banned') { result = { ok: false, code: 'BANNED', message: 'Key đã bị khóa' }; return; }
+    if (freeze) {
+      result = { ok: false, code: 'MAINTENANCE', message: 'Hệ thống đang bảo trì, thời gian key được tạm dừng. Vui lòng quay lại sau.' };
+      return;
+    }
+    if (cur.frozenAt) {
+      result = { ok: false, code: 'FROZEN', message: 'Key đang được tạm dừng (thời gian không bị tính). Liên hệ admin.' };
+      return;
+    }
+
+    const activated = !!cur.activatedAt;
+    if (activated && now > cur.expiresAt) {
+      result = { ok: false, code: 'EXPIRED', message: 'Key đã hết hạn' };
+      return;
+    }
+    const devs = devicesOf(cur);
+    const has = devs.includes(deviceId);
+    if (!has && devs.length >= maxDev(cur)) {
+      result = {
+        ok: false,
+        code: 'DEVICE_MISMATCH',
+        message: 'Key đã đủ ' + maxDev(cur) + ' thiết bị. Vào trang reset để đổi thiết bị.',
+      };
+      return;
+    }
+
+    if (!activated) {
+      // Lần đầu kích hoạt: bắt đầu tính giờ (cộng thêm phần bù nếu có)
+      cur.activatedAt = now;
+      cur.expiresAt = now + DURATIONS[cur.duration] + (cur.bonusMs || 0);
+      cur.bonusMs = null;
+    }
+    if (!has) devs.push(deviceId);
+    cur.devices = devs;
+    cur.deviceId = null;
+    cur.lastUsedAt = now;
+    result = {
+      ok: true,
+      code: 'OK',
+      message: activated ? 'Key hợp lệ' : 'Kích hoạt thành công',
+      info: publicInfo(cur, now, null),
+    };
+    return cur;
+  });
+  return result;
+}
+
+// POST /api/verify {key, deviceId}   (API cũ – giữ nguyên để bản app cũ vẫn chạy)
 app.post('/api/verify', rateLimit(60, 60 * 1000), async (req, res) => {
   const key = normKey(req.body.key);
   const deviceId = req.body.deviceId;
   if (!validKeyFormat(key) || !validDevice(deviceId)) {
     return res.json({ ok: false, code: 'BAD_REQUEST', message: 'Key hoặc deviceId không hợp lệ' });
   }
-  const now = Date.now();
-  let result = { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' };
   try {
-    const freeze = await getFreeze();
-    await db.ref('keys/' + key).transaction((cur) => {
-      if (cur === null) { result = { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' }; return null; }
-      if (cur.status === 'banned') { result = { ok: false, code: 'BANNED', message: 'Key đã bị khóa' }; return; }
-      if (freeze) {
-        result = { ok: false, code: 'MAINTENANCE', message: 'Hệ thống đang bảo trì, thời gian key được tạm dừng. Vui lòng quay lại sau.' };
-        return;
-      }
-      if (cur.frozenAt) {
-        result = { ok: false, code: 'FROZEN', message: 'Key đang được tạm dừng (thời gian không bị tính). Liên hệ admin.' };
-        return;
-      }
-
-      const activated = !!cur.activatedAt;
-      if (activated && now > cur.expiresAt) {
-        result = { ok: false, code: 'EXPIRED', message: 'Key đã hết hạn' };
-        return;
-      }
-      const devs = devicesOf(cur);
-      const has = devs.includes(deviceId);
-      if (!has && devs.length >= maxDev(cur)) {
-        result = {
-          ok: false,
-          code: 'DEVICE_MISMATCH',
-          message: 'Key đã đủ ' + maxDev(cur) + ' thiết bị. Vào trang reset để đổi thiết bị.',
-        };
-        return;
-      }
-
-      if (!activated) {
-        // Lần đầu kích hoạt: bắt đầu tính giờ (cộng thêm phần bù nếu có)
-        cur.activatedAt = now;
-        cur.expiresAt = now + DURATIONS[cur.duration] + (cur.bonusMs || 0);
-        cur.bonusMs = null;
-      }
-      if (!has) devs.push(deviceId);
-      cur.devices = devs;
-      cur.deviceId = null;
-      cur.lastUsedAt = now;
-      result = {
-        ok: true,
-        code: 'OK',
-        message: activated ? 'Key hợp lệ' : 'Kích hoạt thành công',
-        info: publicInfo(cur, now, null),
-      };
-      return cur;
-    });
-    res.json(result);
+    res.json(await runVerify(key, deviceId));
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok: false, code: 'SERVER_ERROR', message: 'Lỗi server' });
@@ -646,6 +661,213 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
     res.status(500).json({ ok: false, message: 'Lỗi server' });
   }
 });
+
+// =====================================================================
+// ===== XÁC THỰC WEBSITE -> APP (vé 1 lần -> phiên) – bản V18 =========
+// =====================================================================
+// Luồng: Website nhập key -> POST /api/web/verify -> server cấp VÉ (dùng 1 lần, sống ~90s, gắn deviceId)
+//        -> website mở app qua deep link muopvip://auth?ticket=... (KHÔNG chứa key)
+//        -> app POST /api/auth/exchange {ticket, deviceId} -> nhận SESSION TOKEN ngẫu nhiên có hạn
+//        -> app gọi POST /api/auth/check {session, deviceId} định kỳ.
+// Dữ liệu lưu trên Firebase (đường dẫn riêng, KHÔNG đụng keys/, sessions/ của hệ thống vượt link):
+//   authTickets/<sha256(ticket)>  = {key, deviceId, createdAt, expiresAt, used, usedAt}
+//   authSessions/<sha256(token)>  = {key, deviceId, createdAt, expiresAt, revoked, lastCheckAt}
+// Biến môi trường (tùy chọn):
+//   AUTH_TICKET_TTL_SEC     : hạn của vé, 30..120 giây (mặc định 90)
+//   AUTH_SESSION_TTL_HOURS  : hạn tối đa của phiên (mặc định 12, luôn bị chặn bởi hạn của key)
+//   WEB_ORIGIN              : nếu đặt website ở domain khác server, liệt kê origin được phép (cách nhau bằng dấu phẩy)
+const TICKET_TTL_MS = Math.min(Math.max(parseInt(process.env.AUTH_TICKET_TTL_SEC || '90', 10) || 90, 30), 120) * 1000;
+const SESSION_MAX_MS = Math.max(parseFloat(process.env.AUTH_SESSION_TTL_HOURS || '12') || 12, 0.25) * H;
+const WEB_ORIGINS = (process.env.WEB_ORIGIN || '').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
+
+function randHex(bytes) { return crypto.randomBytes(bytes).toString('hex'); }
+function tokenId(t) { return crypto.createHash('sha256').update(String(t)).digest('hex'); }
+const TOKEN_RE = /^[a-f0-9]{64}$/;
+
+// Kiểm tra key chỉ-đọc (không gắn thiết bị, không kích hoạt) – cùng thứ tự kiểm tra với runVerify
+function evalKeyAccess(k, deviceId, now, freeze) {
+  if (!k) return { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' };
+  if (k.status === 'banned') return { ok: false, code: 'BANNED', message: 'Key đã bị khóa' };
+  if (freeze) return { ok: false, code: 'MAINTENANCE', message: 'Hệ thống đang bảo trì, thời gian key được tạm dừng. Vui lòng quay lại sau.' };
+  if (k.frozenAt) return { ok: false, code: 'FROZEN', message: 'Key đang được tạm dừng (thời gian không bị tính). Liên hệ admin.' };
+  if (k.activatedAt && now > k.expiresAt) return { ok: false, code: 'EXPIRED', message: 'Key đã hết hạn' };
+  if (!devicesOf(k).includes(deviceId)) {
+    return { ok: false, code: 'DEVICE_REMOVED', message: 'Thiết bị này không còn thuộc key (đã reset). Hãy xác minh lại trên website.' };
+  }
+  return { ok: true, code: 'OK' };
+}
+
+// Không cho trình duyệt/proxy cache các API xác thực
+app.use(['/api/web', '/api/auth'], (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+// CORS chỉ cho /api/web/* và chỉ khi admin cấu hình WEB_ORIGIN (website cùng domain với server thì không cần)
+app.use('/api/web', (req, res, next) => {
+  const origin = (req.get('origin') || '').replace(/\/+$/, '');
+  if (origin && WEB_ORIGINS.includes(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// A. POST /api/web/verify {key, deviceId} -> {ok, ticket, ticketTtlSec, info}
+app.post('/api/web/verify', rateLimit(20, 60 * 1000), async (req, res) => {
+  const key = normKey(req.body.key);
+  const deviceId = req.body.deviceId;
+  if (!validKeyFormat(key)) return res.json({ ok: false, code: 'BAD_KEY_FORMAT', message: 'Key sai định dạng (dạng XXXX-XXXX-XXXX-XXXX).' });
+  if (!validDevice(deviceId)) return res.json({ ok: false, code: 'BAD_DEVICE', message: 'Thiếu mã thiết bị. Hãy mở trang này bằng nút trong app Mr.mướp VIP.' });
+  try {
+    const r = await runVerify(key, deviceId); // kiểm tra khóa/hạn/bảo trì/đóng băng/giới hạn thiết bị + kích hoạt như /api/verify
+    if (!r.ok) return res.json({ ok: false, code: r.code, message: r.message });
+    const ticket = randHex(32);
+    const now = Date.now();
+    await db.ref('authTickets/' + tokenId(ticket)).set({
+      key,
+      deviceId,
+      createdAt: now,
+      expiresAt: now + TICKET_TTL_MS,
+      used: false,
+    });
+    res.json({ ok: true, code: 'OK', message: r.message, ticket, ticketTtlSec: Math.round(TICKET_TTL_MS / 1000), info: r.info });
+  } catch (e) {
+    console.error('WEB VERIFY ERROR:', e);
+    res.status(500).json({ ok: false, code: 'SERVER_ERROR', message: 'Lỗi server' });
+  }
+});
+
+// B. POST /api/auth/exchange {ticket, deviceId} -> {ok, session, expiresAt, keyExpiresAt, info}
+app.post('/api/auth/exchange', rateLimit(30, 60 * 1000), async (req, res) => {
+  const ticket = String(req.body.ticket || '');
+  const deviceId = req.body.deviceId;
+  if (!TOKEN_RE.test(ticket) || !validDevice(deviceId)) {
+    return res.json({ ok: false, code: 'BAD_REQUEST', message: 'Vé hoặc deviceId không hợp lệ' });
+  }
+  const now = Date.now();
+  let result = { ok: false, code: 'TICKET_INVALID', message: 'Vé không tồn tại' };
+  let keyName = null;
+  try {
+    // Giao dịch nguyên tử: chỉ 1 request duy nhất đổi được vé, các request sau (hoặc song song) đều bị từ chối
+    await db.ref('authTickets/' + tokenId(ticket)).transaction((cur) => {
+      if (cur === null) { result = { ok: false, code: 'TICKET_INVALID', message: 'Vé không tồn tại' }; return null; }
+      if (cur.used) { result = { ok: false, code: 'TICKET_USED', message: 'Vé đã được sử dụng. Hãy xác minh lại trên website.' }; return; }
+      if (now > cur.expiresAt) { result = { ok: false, code: 'TICKET_EXPIRED', message: 'Vé đã hết hạn. Hãy xác minh lại trên website.' }; return; }
+      if (cur.deviceId !== deviceId) { result = { ok: false, code: 'TICKET_DEVICE_MISMATCH', message: 'Vé không thuộc thiết bị này.' }; return; }
+      cur.used = true;
+      cur.usedAt = now;
+      keyName = cur.key;
+      result = { ok: true };
+      return cur;
+    });
+    if (!result.ok) return res.json(result);
+
+    // Kiểm tra lại key ngay lúc đổi (key có thể vừa bị khóa/bảo trì sau khi cấp vé)
+    const [snap, freeze] = await Promise.all([db.ref('keys/' + keyName).once('value'), getFreeze()]);
+    const k = snap.exists() ? snap.val() : null;
+    const acc = evalKeyAccess(k, deviceId, now, freeze);
+    if (!acc.ok) return res.json({ ok: false, code: acc.code, message: acc.message });
+
+    const session = randHex(32);
+    const expiresAt = Math.min(now + SESSION_MAX_MS, k.expiresAt || Infinity);
+    await db.ref('authSessions/' + tokenId(session)).set({
+      key: keyName,
+      deviceId,
+      createdAt: now,
+      expiresAt,
+      revoked: false,
+      lastCheckAt: now,
+    });
+    res.json({
+      ok: true,
+      code: 'OK',
+      message: 'Xác thực thành công',
+      session,
+      expiresAt,
+      keyExpiresAt: k.expiresAt || null,
+      info: publicInfo(k, now, null),
+    });
+  } catch (e) {
+    console.error('AUTH EXCHANGE ERROR:', e);
+    res.status(500).json({ ok: false, code: 'SERVER_ERROR', message: 'Lỗi server' });
+  }
+});
+
+// C. POST /api/auth/check {session, deviceId} -> {ok, ...}
+app.post('/api/auth/check', rateLimit(120, 60 * 1000), async (req, res) => {
+  const session = String(req.body.session || '');
+  const deviceId = req.body.deviceId;
+  if (!TOKEN_RE.test(session) || !validDevice(deviceId)) {
+    return res.json({ ok: false, code: 'SESSION_INVALID', message: 'Phiên không hợp lệ' });
+  }
+  const now = Date.now();
+  try {
+    const ref = db.ref('authSessions/' + tokenId(session));
+    const snap = await ref.once('value');
+    if (!snap.exists()) return res.json({ ok: false, code: 'SESSION_INVALID', message: 'Phiên không tồn tại. Hãy xác minh lại trên website.' });
+    const s = snap.val();
+    if (s.revoked) return res.json({ ok: false, code: 'SESSION_REVOKED', message: 'Phiên đã bị thu hồi. Hãy xác minh lại trên website.' });
+    if (now > s.expiresAt) return res.json({ ok: false, code: 'SESSION_EXPIRED', message: 'Phiên đã hết hạn. Hãy xác minh lại trên website.' });
+    if (s.deviceId !== deviceId) return res.json({ ok: false, code: 'DEVICE_MISMATCH', message: 'Phiên không thuộc thiết bị này.' });
+
+    const [ksnap, freeze] = await Promise.all([db.ref('keys/' + s.key).once('value'), getFreeze()]);
+    const k = ksnap.exists() ? ksnap.val() : null;
+    const acc = evalKeyAccess(k, deviceId, now, freeze);
+    if (!acc.ok) {
+      // Key bị xóa / thiết bị bị reset -> phiên vô hiệu hẳn. Các lỗi tạm thời (bảo trì, đóng băng, khóa, hết hạn) thì phiên giữ nguyên,
+      // admin mở khóa / cộng giờ là dùng lại được ngay.
+      if (acc.code === 'NOT_FOUND' || acc.code === 'DEVICE_REMOVED') await ref.update({ revoked: true }).catch(() => {});
+      return res.json({ ok: false, code: acc.code, message: acc.message });
+    }
+    if (now - (s.lastCheckAt || 0) > 60 * 1000) await ref.update({ lastCheckAt: now }).catch(() => {});
+    res.json({
+      ok: true,
+      code: 'OK',
+      message: 'Phiên hợp lệ',
+      expiresAt: s.expiresAt,
+      keyExpiresAt: k.expiresAt || null,
+      info: publicInfo(k, now, null),
+    });
+  } catch (e) {
+    console.error('AUTH CHECK ERROR:', e);
+    res.status(500).json({ ok: false, code: 'SERVER_ERROR', message: 'Lỗi server' });
+  }
+});
+
+// D. POST /api/auth/logout {session, deviceId} -> thu hồi phiên (app gọi khi người dùng đăng xuất)
+app.post('/api/auth/logout', rateLimit(30, 60 * 1000), async (req, res) => {
+  const session = String(req.body.session || '');
+  const deviceId = req.body.deviceId;
+  if (!TOKEN_RE.test(session) || !validDevice(deviceId)) return res.json({ ok: true });
+  try {
+    const ref = db.ref('authSessions/' + tokenId(session));
+    const snap = await ref.once('value');
+    if (snap.exists() && snap.val().deviceId === deviceId) await ref.update({ revoked: true });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, code: 'SERVER_ERROR', message: 'Lỗi server' });
+  }
+});
+
+// Dọn vé / phiên đã hết hạn trên Firebase (10 phút/lần, mỗi lần tối đa 500 mục mỗi loại)
+async function purgeAuth() {
+  const now = Date.now();
+  for (const [node, grace] of [['authTickets', 10 * 60 * 1000], ['authSessions', 24 * H]]) {
+    try {
+      const snap = await db.ref(node).orderByChild('expiresAt').endAt(now - grace).limitToFirst(500).once('value');
+      const upd = {};
+      snap.forEach((c) => { upd[node + '/' + c.key] = null; });
+      if (Object.keys(upd).length) await db.ref().update(upd);
+    } catch (e) {
+      console.error('PURGE ' + node + ' ERROR:', e.message);
+    }
+  }
+}
+setInterval(purgeAuth, 10 * 60 * 1000).unref();
 
 app.get('/health', (req, res) => res.send('ok'));
 
