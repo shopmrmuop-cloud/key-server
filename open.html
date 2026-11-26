@@ -121,6 +121,9 @@ input:disabled{opacity:.6}
     DEVICE_MISMATCH: ['Key đã đủ thiết bị', 'err'], BAD_DEVICE: ['Thiếu mã thiết bị', 'warn']
   };
 
+  if (IN_APP) {
+    say('warn', 'Hãy mở bằng Chrome', 'Trình duyệt trong Zalo/Facebook/Telegram không mở được app. Bấm dấu ⋮ hoặc “Mở bằng trình duyệt” rồi chọn Chrome.');
+  }
   if (!deviceId) {
     go.disabled = true; inp.disabled = true;
     say('warn', 'Hãy mở trang này từ app', 'Mở app Mr.mướp VIP rồi bấm nút “Xác minh trên website” để trang nhận được mã thiết bị của bạn.');
@@ -133,15 +136,34 @@ input:disabled{opacity:.6}
     if (st.classList.contains('err')) clearSay();
   });
 
-  function openApp(ticket) {
+  var lastUrl = '#';
+  var IN_APP = /(zalo|fban|fbav|fb_iab|instagram|line\/|telegram|messenger|tiktok|musical_ly)/i.test(navigator.userAgent);
+
+  function buildUrl(ticket) {
     var q = 'ticket=' + encodeURIComponent(ticket);
-    var isChrome = /Android/i.test(navigator.userAgent) && /Chrome\//.test(navigator.userAgent);
-    var url = isChrome
-      ? 'intent://auth?' + q + '#Intent;scheme=' + APP_SCHEME + ';package=' + APP_PACKAGE + ';end'
-      : APP_SCHEME + '://auth?' + q;
-    $('open').href = url;
-    setTimeout(function () { location.href = url; }, 350);   // tự mở; nếu trình duyệt chặn thì người dùng bấm nút
+    var isAndroid = /Android/i.test(navigator.userAgent);
+    var isFirefox = /Firefox\//.test(navigator.userAgent);
+    // Android (Chrome, Samsung, Edge, Cốc Cốc...): dùng intent:// kèm package. Firefox: dùng scheme trực tiếp.
+    if (isAndroid && !isFirefox) {
+      return 'intent://auth/?' + q + '#Intent;scheme=' + APP_SCHEME + ';package=' + APP_PACKAGE + ';end';
+    }
+    return APP_SCHEME + '://auth?' + q;
   }
+
+  function openApp(ticket) {
+    lastUrl = buildUrl(ticket);
+    $('open').setAttribute('href', lastUrl);
+    // Tự mở thử một lần. Chrome thường CHẶN bước này vì không có thao tác chạm của người dùng
+    // (fetch mất thời gian nên "user gesture" đã hết hạn) -> nút bên dưới là đường chính.
+    setTimeout(function () { try { location.href = lastUrl; } catch (e) {} }, 300);
+  }
+
+  // Nút MỞ ỨNG DỤNG: điều hướng bằng chính cú chạm của người dùng (Chrome cho phép)
+  $('open').addEventListener('click', function (ev) {
+    if (lastUrl === '#') { ev.preventDefault(); return; }
+    ev.preventDefault();
+    location.href = lastUrl;
+  });
 
   function showSuccess(ticket, ttl) {
     form.classList.add('hide'); okBox.classList.remove('hide');
