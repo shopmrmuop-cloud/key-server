@@ -61,10 +61,10 @@ $('btnCheck').onclick = async () => {
     const d = await post('/api/status', { key: keyEl.value });
     if (!d.ok) return show(d.message, false);
     const i = d.info;
-    const status = i.banned ? 'Đã bị khóa' : i.expired ? 'Hết hạn' : i.activated ? 'Đang hoạt động' : 'Chưa kích hoạt';
+    const status = i.banned ? 'Đã bị khóa' : i.expired ? 'Hết hạn' : i.maintenance ? 'Đang bảo trì (tạm dừng tính giờ)' : i.frozen ? 'Tạm dừng' : i.activated ? 'Đang hoạt động' : 'Chưa kích hoạt';
     info.innerHTML = 'Trạng thái: <b>' + status + '</b><br>' +
       (i.activated ? 'Còn lại: <b>' + fmt(i.remainingMs) + '</b><br>' : 'Thời hạn: <b>' + fmt(i.remainingMs) + '</b> (tính từ lần kích hoạt đầu)<br>') +
-      'Thiết bị: <b>' + (i.deviceBound ? 'Đã gắn' : 'Chưa gắn') + '</b><br>' +
+      'Thiết bị: <b>' + i.devices + '/' + i.maxDevices + '</b><br>' +
       'Lượt reset còn lại: <b>' + i.resetsLeft + '</b>';
     info.style.display = 'block';
   } catch { show('Không kết nối được server', false); }

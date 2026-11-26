@@ -6,15 +6,16 @@
 <meta name="robots" content="noindex">
 <title>Admin - Quản lý key</title>
 <style>
-  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mut:#8b93a5; --acc:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; --warn:#f5a524; }
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --text:#e8eaf0; --mut:#8b93a5; --acc:#4f8cff; --ok:#3ecf8e; --err:#ff6b6b; --warn:#f5a524; --ice:#5ac8fa; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:16px; }
-  .wrap { max-width:1000px; margin:0 auto; }
+  .wrap { max-width:1100px; margin:0 auto; }
   h1 { font-size:20px; margin:0 0 16px; }
+  h2 { font-size:15px; margin:0 0 10px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
   input, select { padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:#0f1115; color:var(--text); font-size:14px; }
   button { padding:9px 14px; border:0; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; color:#fff; background:var(--acc); }
-  button.sec { background:#2a2f3a; } button.danger { background:#c0392b; } button.warn { background:#b9770e; }
+  button.sec { background:#2a2f3a; } button.danger { background:#c0392b; } button.warn { background:#b9770e; } button.ice { background:#1f7fa8; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   #login { max-width:340px; margin:80px auto; }
   #app { display:none; }
@@ -22,13 +23,15 @@
   th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
   th { color:var(--mut); font-weight:600; }
   .tblwrap { overflow-x:auto; }
-  .tag { padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; }
+  .tag { padding:2px 8px; border-radius:99px; font-size:12px; font-weight:600; white-space:nowrap; }
   .t-ok { background:#12372a; color:var(--ok); } .t-wait { background:#2a2f3a; color:var(--mut); }
-  .t-exp { background:#3b2a12; color:var(--warn); } .t-ban { background:#3b1a1a; color:var(--err); }
+  .t-exp { background:#3b2a12; color:var(--warn); } .t-ban { background:#3b1a1a; color:var(--err); } .t-ice { background:#123043; color:var(--ice); }
   code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; cursor:pointer; }
-  #out { white-space:pre; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; margin-top:12px; background:#0f1115; border:1px solid var(--line); border-radius:8px; padding:10px; display:none; }
+  #out { white-space:pre; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; margin-top:12px; background:#0f1115; border:1px solid var(--line); border-radius:8px; padding:10px; display:none; overflow-x:auto; }
   .mut { color:var(--mut); }
   .acts button { margin:2px 2px 2px 0; padding:5px 8px; font-size:12px; }
+  #banner { display:none; background:#123043; border:1px solid var(--ice); color:var(--ice); border-radius:10px; padding:12px; margin-bottom:12px; font-size:14px; line-height:1.5; }
+  .small { font-size:12px; color:var(--mut); margin-top:8px; line-height:1.5; }
 </style>
 </head>
 <body>
@@ -45,6 +48,20 @@
   </div>
 
   <div class="card">
+    <h2>Bảo trì (áp dụng cho tất cả key)</h2>
+    <div id="banner"></div>
+    <div class="row">
+      <button id="btnFreezeAll" class="ice">Đóng băng tất cả key</button>
+      <span class="mut" style="margin:0 4px">|</span>
+      <input type="number" id="extAllNum" value="1" min="0" step="any" style="width:80px">
+      <select id="extAllUnit"><option value="1">giờ</option><option value="24" selected>ngày</option></select>
+      <button id="btnExtendAll">Bù thời gian tất cả key</button>
+    </div>
+    <div class="small">Đóng băng: thời gian mọi key ngừng đếm, app không dùng được (báo bảo trì). Rã đông sẽ tự cộng đúng khoảng thời gian đã dừng vào hạn của từng key. Bù thời gian: cộng thêm cho các key đang hoạt động (chưa hết hạn).</div>
+  </div>
+
+  <div class="card">
+    <h2>Tạo key mới</h2>
     <div class="row">
       <select id="dur">
         <option value="6h">6 giờ</option>
@@ -53,7 +70,9 @@
         <option value="7d">7 ngày</option>
         <option value="30d">30 ngày</option>
       </select>
-      <input type="number" id="count" value="1" min="1" max="100" style="width:80px" title="Số lượng">
+      <input type="number" id="count" value="1" min="1" max="100" style="width:80px" title="Số lượng key">
+      <input type="number" id="maxdev" value="1" min="1" max="100" style="width:80px" title="Số thiết bị mỗi key">
+      <span class="mut" style="font-size:12px">key / TB mỗi key</span>
       <input id="note" placeholder="Ghi chú (tên khách...)" style="flex:1;min-width:140px">
       <button id="btnCreate">Tạo key</button>
     </div>
@@ -67,6 +86,7 @@
         <option value="">Tất cả</option>
         <option value="wait">Chưa kích hoạt</option>
         <option value="ok">Đang hoạt động</option>
+        <option value="ice">Đóng băng</option>
         <option value="exp">Hết hạn</option>
         <option value="ban">Bị khóa</option>
       </select>
@@ -75,7 +95,7 @@
     <div class="mut" id="stats" style="font-size:13px;margin-bottom:8px"></div>
     <div class="tblwrap">
       <table>
-        <thead><tr><th>Key</th><th>Loại</th><th>Trạng thái</th><th>Hết hạn</th><th>Thiết bị</th><th>Reset</th><th>Ghi chú</th><th></th></tr></thead>
+        <thead><tr><th>Key</th><th>Loại</th><th>Trạng thái</th><th>Hết hạn</th><th>TB</th><th>Reset</th><th>Ghi chú</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
@@ -85,8 +105,9 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const DUR = { '6h': '6 giờ', '1d': '1 ngày', '3d': '3 ngày', '7d': '7 ngày', '30d': '30 ngày' };
-let token = sessionStorage.getItem('adm') || '';
-let all = [], maxResets = 3;
+let token = '';
+try { token = sessionStorage.getItem('adm') || ''; } catch (e) {}
+let all = [], maxResets = 3, freeze = null;
 
 async function api(path, body) {
   const opt = { headers: { 'x-admin-token': token, 'Content-Type': 'application/json' } };
@@ -97,18 +118,38 @@ async function api(path, body) {
   try { return JSON.parse(text); }
   catch { return { ok: false, message: 'Server trả về lỗi ' + r.status + ': ' + text.replace(/<[^>]*>/g, ' ').slice(0, 150) }; }
 }
-function logout() { sessionStorage.removeItem('adm'); token = ''; $('app').style.display = 'none'; $('login').style.display = 'block'; }
+function logout() { try { sessionStorage.removeItem('adm'); } catch (e) {} token = ''; $('app').style.display = 'none'; $('login').style.display = 'block'; }
 function stateOf(k) {
   if (k.status === 'banned') return 'ban';
+  if (k.frozen || (freeze && k.activatedAt && !k.expired)) return 'ice';
   if (k.expired) return 'exp';
   if (k.activatedAt) return 'ok';
   return 'wait';
 }
-const LABEL = { ok: 'Hoạt động', wait: 'Chưa dùng', exp: 'Hết hạn', ban: 'Khóa' };
-const CLS = { ok: 't-ok', wait: 't-wait', exp: 't-exp', ban: 't-ban' };
+const LABEL = { ok: 'Hoạt động', wait: 'Chưa dùng', exp: 'Hết hạn', ban: 'Khóa', ice: 'Đóng băng' };
+const CLS = { ok: 't-ok', wait: 't-wait', exp: 't-exp', ban: 't-ban', ice: 't-ice' };
 function fdate(ts) { return ts ? new Date(ts).toLocaleString('vi-VN') : '—'; }
+function fdur(ms) {
+  const m = Math.floor(ms / 60000), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
+  return (d ? d + ' ngày ' : '') + h + ' giờ ' + (m % 60) + ' phút';
+}
+
+function renderBanner() {
+  const b = $('banner');
+  if (freeze) {
+    b.style.display = 'block';
+    b.textContent = 'ĐANG BẢO TRÌ: tất cả key đang đóng băng từ ' + fdate(freeze.since) + '. Bấm "Rã đông" để mở lại và tự bù thời gian.';
+    $('btnFreezeAll').textContent = 'Rã đông tất cả key';
+    $('btnFreezeAll').className = 'warn';
+  } else {
+    b.style.display = 'none';
+    $('btnFreezeAll').textContent = 'Đóng băng tất cả key';
+    $('btnFreezeAll').className = 'ice';
+  }
+}
 
 function render() {
+  renderBanner();
   const q = $('search').value.trim().toLowerCase(), f = $('filter').value;
   const tbody = $('rows'); tbody.textContent = '';
   const list = all.filter((k) => (!f || stateOf(k) === f) && (!q || k.key.toLowerCase().includes(q) || k.note.toLowerCase().includes(q)));
@@ -119,34 +160,43 @@ function render() {
     const td = (child) => { const c = document.createElement('td'); if (typeof child === 'string') c.textContent = child; else if (child) c.appendChild(child); tr.appendChild(c); return c; };
 
     const code = document.createElement('code'); code.textContent = k.key; code.title = 'Bấm để copy';
-    code.onclick = () => navigator.clipboard.writeText(k.key);
+    code.onclick = () => { try { navigator.clipboard.writeText(k.key); } catch (e) {} };
     td(code);
     td(DUR[k.duration] || k.duration);
     const tag = document.createElement('span'); tag.className = 'tag ' + CLS[st]; tag.textContent = LABEL[st]; td(tag);
-    td(fdate(k.expiresAt));
-    td(k.deviceId ? k.deviceId.slice(0, 10) + '…' : '—');
+    td(k.bonusMs ? fdate(k.expiresAt) + ' (+' + fdur(k.bonusMs) + ' khi kích hoạt)' : fdate(k.expiresAt));
+    td(k.devices + '/' + k.maxDevices);
     td(k.resetCount + '/' + maxResets);
     td(k.note);
 
     const acts = document.createElement('div'); acts.className = 'acts';
     const mk = (text, cls, fn) => { const b = document.createElement('button'); b.textContent = text; if (cls) b.className = cls; b.onclick = fn; acts.appendChild(b); };
-    if (k.deviceId) mk('Reset TB', 'sec', () => act('reset', k.key));
-    if (k.status === 'banned') mk('Mở khóa', 'sec', () => act('unban', k.key));
-    else mk('Khóa', 'warn', () => act('ban', k.key));
-    mk('Xóa', 'danger', () => { if (confirm('Xóa key ' + k.key + '?')) act('delete', k.key); });
+    if (k.devices > 0) mk('Reset TB', 'sec', () => act('reset', { key: k.key }));
+    mk('Số TB', 'sec', () => {
+      const v = prompt('Số thiết bị tối đa cho key này (1-100):', k.maxDevices);
+      if (v !== null) act('setdevices', { key: k.key, maxDevices: parseInt(v, 10) });
+    });
+    mk(k.frozen ? 'Rã đông' : 'Đóng băng', 'ice', () => act('freeze', { key: k.key, on: !k.frozen }));
+    mk('Bù giờ', 'sec', () => {
+      const v = prompt('Bù thêm bao nhiêu GIỜ cho key này? (ví dụ 24 = 1 ngày)', '24');
+      if (v !== null) act('extend', { key: k.key, hours: parseFloat(v) });
+    });
+    if (k.status === 'banned') mk('Mở khóa', 'sec', () => act('unban', { key: k.key }));
+    else mk('Khóa', 'warn', () => act('ban', { key: k.key }));
+    mk('Xóa', 'danger', () => { if (confirm('Xóa key ' + k.key + '?')) act('delete', { key: k.key }); });
     td(acts);
     tbody.appendChild(tr);
   }
 }
-async function act(name, key) {
-  const d = await api('/api/admin/' + name, { key });
+async function act(name, body) {
+  const d = await api('/api/admin/' + name, body);
   if (!d.ok) alert(d.message || 'Lỗi');
   load();
 }
 async function load() {
   const d = await api('/api/admin/keys');
   if (!d.ok) return;
-  all = d.keys; maxResets = d.maxResets; render();
+  all = d.keys; maxResets = d.maxResets; freeze = d.freeze; render();
 }
 async function enter() {
   $('login').style.display = 'none'; $('app').style.display = 'block';
@@ -157,18 +207,48 @@ $('btnLogin').onclick = async () => {
   try {
     const r = await fetch('/api/admin/keys', { headers: { 'x-admin-token': token } });
     if (r.status === 401) { $('loginErr').textContent = 'Sai mật khẩu'; return; }
-    sessionStorage.setItem('adm', token); enter();
+    try { sessionStorage.setItem('adm', token); } catch (e) {}
+    enter();
   } catch { $('loginErr').textContent = 'Không kết nối được server'; }
 };
 $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnLogin').click(); });
 $('btnLogout').onclick = logout;
 $('btnRefresh').onclick = load;
 $('search').oninput = render; $('filter').onchange = render;
+
+$('btnFreezeAll').onclick = async () => {
+  if (freeze) {
+    if (!confirm('Rã đông tất cả key? Hệ thống sẽ tự bù thời gian đã dừng cho từng key.')) return;
+    const d = await api('/api/admin/freeze-all', { on: false });
+    if (!d.ok) return alert(d.message || 'Lỗi');
+    alert('Đã rã đông. Đã bù thời gian cho ' + (d.adjusted || 0) + ' key (mỗi key +' + fdur(d.addedMs || 0) + ' tối đa).');
+  } else {
+    if (!confirm('Đóng băng TẤT CẢ key? App sẽ báo bảo trì và thời gian key ngừng đếm.')) return;
+    const d = await api('/api/admin/freeze-all', { on: true });
+    if (!d.ok) return alert(d.message || 'Lỗi');
+  }
+  load();
+};
+$('btnExtendAll').onclick = async () => {
+  const hours = (parseFloat($('extAllNum').value) || 0) * parseFloat($('extAllUnit').value);
+  if (!(hours > 0)) return alert('Nhập số lớn hơn 0');
+  if (!confirm('Bù thêm ' + fdur(hours * 3600000) + ' cho tất cả key đang hoạt động?')) return;
+  const d = await api('/api/admin/extend-all', { hours });
+  if (!d.ok) return alert(d.message || 'Lỗi');
+  alert('Đã bù cho ' + d.adjusted + ' key.');
+  load();
+};
+
 $('btnCreate').onclick = async () => {
   const out = $('out');
   out.style.display = 'block'; out.textContent = 'Đang tạo key, chờ chút (có thể tới 1 phút nếu server mới thức dậy)...';
   try {
-    const d = await api('/api/admin/create', { duration: $('dur').value, count: parseInt($('count').value, 10) || 1, note: $('note').value });
+    const d = await api('/api/admin/create', {
+      duration: $('dur').value,
+      count: parseInt($('count').value, 10) || 1,
+      maxDevices: parseInt($('maxdev').value, 10) || 1,
+      note: $('note').value,
+    });
     if (!d.ok) { out.textContent = 'LỖI: ' + (d.message || 'không rõ'); return; }
     out.textContent = d.keys.join('\n');
     try { navigator.clipboard.writeText(d.keys.join('\n')); } catch (e) {}

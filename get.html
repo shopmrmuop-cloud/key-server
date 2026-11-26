@@ -22,7 +22,7 @@
 <body>
 <div class="card">
   <h1>Lấy key miễn phí</h1>
-  <p>Key thời hạn <b id="dur">...</b>. Vượt <b id="steps">2</b> link liên tiếp, key sẽ tự hiện ra.</p>
+  <p>Key thời hạn <b id="dur">...</b>, dùng cho <b id="devs">1</b> thiết bị (đổi máy phải reset key). Vượt <b id="steps">2</b> link liên tiếp, key sẽ tự hiện ra.</p>
   <ol>
     <li>Bấm nút <b>Lấy key</b> bên dưới.</li>
     <li>Vượt link thứ nhất, trang tự quay về rồi chuyển sang link thứ hai.</li>
@@ -39,6 +39,7 @@ const LABEL = { '6h': '6 giờ', '1d': '1 ngày', '3d': '3 ngày', '7d': '7 ngà
 fetch('/api/gate/info').then((r) => r.json()).then((d) => {
   $('dur').textContent = LABEL[d.duration] || d.duration;
   if (d.steps) $('steps').textContent = d.steps;
+  if (d.devices) $('devs').textContent = d.devices;
   if (!d.configured) { $('msg').textContent = 'Chức năng này chưa được bật.'; $('btn').disabled = true; }
 }).catch(() => {});
 

@@ -1,5 +1,7 @@
-// Key server: tạo key 6 giờ / 1 ngày / 3 ngày / 7 ngày / 30 ngày, lưu online trên Firebase Realtime Database.
-// Thời hạn key bắt đầu tính từ lần đầu kích hoạt (gắn thiết bị).
+// Key server: key 6 giờ / 1 ngày / 3 ngày / 7 ngày / 30 ngày, lưu online trên Firebase Realtime Database.
+// - Thời hạn key bắt đầu tính từ lần đầu kích hoạt.
+// - Mỗi key có số thiết bị tối đa (mặc định 1). Muốn sang thiết bị mới phải reset key.
+// - Đóng băng tất cả key / từng key (thời gian ngừng đếm), bù thêm giờ cho tất cả / từng key.
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -52,10 +54,25 @@ function validKeyFormat(k) {
 function validDevice(d) {
   return typeof d === 'string' && d.length >= 4 && d.length <= 200;
 }
+// Danh sách thiết bị của key (tương thích key cũ chỉ có deviceId)
+function devicesOf(k) {
+  if (Array.isArray(k.devices)) return k.devices.filter(Boolean);
+  if (k.devices && typeof k.devices === 'object') return Object.values(k.devices).filter(Boolean);
+  return k.deviceId ? [k.deviceId] : [];
+}
+function maxDev(k) {
+  return k.maxDevices > 0 ? k.maxDevices : 1;
+}
+
+async function getFreeze() {
+  const v = (await db.ref('config/freeze').once('value')).val();
+  return v && v.since ? v : null;
+}
 
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '10kb' }));
+
 // Trang web: tự tìm file trong thư mục public, nếu không có thì tìm ngay thư mục ngoài cùng
 function pageFile(name) {
   const inPublic = path.join(__dirname, 'public', name);
@@ -98,8 +115,9 @@ function adminAuth(req, res, next) {
   next();
 }
 
-function publicInfo(k, now) {
+function publicInfo(k, now, freeze) {
   const expired = k.expiresAt ? now > k.expiresAt : false;
+  const devs = devicesOf(k);
   return {
     duration: k.duration,
     activated: !!k.activatedAt,
@@ -107,7 +125,11 @@ function publicInfo(k, now) {
     remainingMs: k.expiresAt ? Math.max(0, k.expiresAt - now) : DURATIONS[k.duration],
     expired,
     banned: k.status === 'banned',
-    deviceBound: !!k.deviceId,
+    frozen: !!(freeze || k.frozenAt),
+    maintenance: !!freeze,
+    deviceBound: devs.length > 0,
+    devices: devs.length,
+    maxDevices: maxDev(k),
     resetsLeft: Math.max(0, MAX_RESETS - (k.resetCount || 0)),
   };
 }
@@ -123,35 +145,51 @@ app.post('/api/verify', rateLimit(60, 60 * 1000), async (req, res) => {
   const now = Date.now();
   let result = { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' };
   try {
+    const freeze = await getFreeze();
     await db.ref('keys/' + key).transaction((cur) => {
       if (cur === null) { result = { ok: false, code: 'NOT_FOUND', message: 'Key không tồn tại' }; return null; }
       if (cur.status === 'banned') { result = { ok: false, code: 'BANNED', message: 'Key đã bị khóa' }; return; }
-
-      if (!cur.deviceId) {
-        if (!cur.activatedAt) {
-          // Lần đầu kích hoạt: bắt đầu tính giờ
-          cur.activatedAt = now;
-          cur.expiresAt = now + DURATIONS[cur.duration];
-        } else if (now > cur.expiresAt) {
-          result = { ok: false, code: 'EXPIRED', message: 'Key đã hết hạn' };
-          return;
-        }
-        cur.deviceId = deviceId;
-        cur.lastUsedAt = now;
-        result = { ok: true, code: 'OK', message: 'Kích hoạt thành công', info: publicInfo(cur, now) };
-        return cur;
-      }
-
-      if (cur.deviceId !== deviceId) {
-        result = { ok: false, code: 'DEVICE_MISMATCH', message: 'Key đang dùng trên thiết bị khác. Vào trang reset để đổi thiết bị.' };
+      if (freeze) {
+        result = { ok: false, code: 'MAINTENANCE', message: 'Hệ thống đang bảo trì, thời gian key được tạm dừng. Vui lòng quay lại sau.' };
         return;
       }
-      if (now > cur.expiresAt) {
+      if (cur.frozenAt) {
+        result = { ok: false, code: 'FROZEN', message: 'Key đang được tạm dừng (thời gian không bị tính). Liên hệ admin.' };
+        return;
+      }
+
+      const activated = !!cur.activatedAt;
+      if (activated && now > cur.expiresAt) {
         result = { ok: false, code: 'EXPIRED', message: 'Key đã hết hạn' };
         return;
       }
+      const devs = devicesOf(cur);
+      const has = devs.includes(deviceId);
+      if (!has && devs.length >= maxDev(cur)) {
+        result = {
+          ok: false,
+          code: 'DEVICE_MISMATCH',
+          message: 'Key đã đủ ' + maxDev(cur) + ' thiết bị. Vào trang reset để đổi thiết bị.',
+        };
+        return;
+      }
+
+      if (!activated) {
+        // Lần đầu kích hoạt: bắt đầu tính giờ (cộng thêm phần bù nếu có)
+        cur.activatedAt = now;
+        cur.expiresAt = now + DURATIONS[cur.duration] + (cur.bonusMs || 0);
+        cur.bonusMs = null;
+      }
+      if (!has) devs.push(deviceId);
+      cur.devices = devs;
+      cur.deviceId = null;
       cur.lastUsedAt = now;
-      result = { ok: true, code: 'OK', message: 'Key hợp lệ', info: publicInfo(cur, now) };
+      result = {
+        ok: true,
+        code: 'OK',
+        message: activated ? 'Key hợp lệ' : 'Kích hoạt thành công',
+        info: publicInfo(cur, now, null),
+      };
       return cur;
     });
     res.json(result);
@@ -168,7 +206,7 @@ app.post('/api/status', rateLimit(30, 60 * 1000), async (req, res) => {
   try {
     const snap = await db.ref('keys/' + key).once('value');
     if (!snap.exists()) return res.json({ ok: false, message: 'Key không tồn tại' });
-    res.json({ ok: true, info: publicInfo(snap.val(), Date.now()) });
+    res.json({ ok: true, info: publicInfo(snap.val(), Date.now(), await getFreeze()) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok: false, message: 'Lỗi server' });
@@ -186,11 +224,12 @@ app.post('/api/reset', rateLimit(10, 60 * 1000), async (req, res) => {
       if (cur === null) { result = { ok: false, message: 'Key không tồn tại' }; return null; }
       if (cur.status === 'banned') { result = { ok: false, message: 'Key đã bị khóa' }; return; }
       if (cur.expiresAt && now > cur.expiresAt) { result = { ok: false, message: 'Key đã hết hạn, không thể reset' }; return; }
-      if (!cur.deviceId) { result = { ok: false, message: 'Key chưa gắn thiết bị nào, không cần reset' }; return; }
+      if (devicesOf(cur).length === 0) { result = { ok: false, message: 'Key chưa gắn thiết bị nào, không cần reset' }; return; }
       if ((cur.resetCount || 0) >= MAX_RESETS) {
         result = { ok: false, message: 'Key đã hết lượt reset (' + MAX_RESETS + ' lần). Liên hệ admin.' };
         return;
       }
+      cur.devices = null;
       cur.deviceId = null;
       cur.resetCount = (cur.resetCount || 0) + 1;
       cur.lastResetAt = now;
@@ -212,6 +251,7 @@ app.post('/api/reset', rateLimit(10, 60 * 1000), async (req, res) => {
 app.post('/api/admin/create', adminAuth, async (req, res) => {
   const duration = req.body.duration;
   const count = Math.min(Math.max(parseInt(req.body.count || '1', 10), 1), 100);
+  const maxDevices = Math.min(Math.max(parseInt(req.body.maxDevices || '1', 10) || 1, 1), 100);
   const note = String(req.body.note || '').slice(0, 100);
   if (!DURATIONS[duration]) return res.json({ ok: false, message: 'Loại key không hợp lệ' });
   try {
@@ -226,6 +266,7 @@ app.post('/api/admin/create', adminAuth, async (req, res) => {
         status: 'active',
         createdAt: Date.now(),
         resetCount: 0,
+        maxDevices,
       };
       created.push(k);
     }
@@ -240,10 +281,12 @@ app.post('/api/admin/create', adminAuth, async (req, res) => {
 app.get('/api/admin/keys', adminAuth, async (req, res) => {
   try {
     const snap = await db.ref('keys').once('value');
+    const freeze = await getFreeze();
     const now = Date.now();
     const list = [];
     snap.forEach((c) => {
       const v = c.val();
+      const devs = devicesOf(v);
       list.push({
         key: c.key,
         duration: v.duration,
@@ -253,13 +296,16 @@ app.get('/api/admin/keys', adminAuth, async (req, res) => {
         activatedAt: v.activatedAt || null,
         expiresAt: v.expiresAt || null,
         expired: v.expiresAt ? now > v.expiresAt : false,
-        deviceId: v.deviceId || null,
+        frozen: !!v.frozenAt,
+        devices: devs.length,
+        maxDevices: maxDev(v),
+        bonusMs: v.bonusMs || 0,
         resetCount: v.resetCount || 0,
         lastUsedAt: v.lastUsedAt || null,
       });
     });
     list.sort((a, b) => b.createdAt - a.createdAt);
-    res.json({ ok: true, keys: list, maxResets: MAX_RESETS });
+    res.json({ ok: true, keys: list, maxResets: MAX_RESETS, freeze, now });
   } catch (e) {
     console.error(e);
     res.status(500).json({ ok: false, message: 'Lỗi server' });
@@ -274,8 +320,8 @@ function adminKeyAction(name, fn) {
       const ref = db.ref('keys/' + key);
       const snap = await ref.once('value');
       if (!snap.exists()) return res.json({ ok: false, message: 'Key không tồn tại' });
-      await fn(ref);
-      res.json({ ok: true });
+      const out = await fn(ref, req.body);
+      res.json(Object.assign({ ok: true }, out || {}));
     } catch (e) {
       console.error(e);
       res.status(500).json({ ok: false, message: 'Lỗi server' });
@@ -283,23 +329,128 @@ function adminKeyAction(name, fn) {
   });
 }
 // Admin reset thiết bị: không giới hạn lượt, không tính vào resetCount
-adminKeyAction('reset', (ref) => ref.update({ deviceId: null }));
+adminKeyAction('reset', (ref) => ref.update({ devices: null, deviceId: null }));
 adminKeyAction('ban', (ref) => ref.update({ status: 'banned' }));
 adminKeyAction('unban', (ref) => ref.update({ status: 'active' }));
 adminKeyAction('delete', (ref) => ref.remove());
 
-// ===== Vượt link lấy key miễn phí (vượt 2 link liên tiếp) =====
+// Đặt số thiết bị tối đa cho 1 key
+adminKeyAction('setdevices', async (ref, body) => {
+  const n = parseInt(body.maxDevices, 10);
+  if (!(n >= 1 && n <= 100)) return { ok: false, message: 'Số thiết bị phải từ 1 đến 100' };
+  await ref.update({ maxDevices: n });
+});
+
+// Đóng băng / rã đông 1 key
+adminKeyAction('freeze', async (ref, body) => {
+  const on = !!body.on;
+  const now = Date.now();
+  const freeze = await getFreeze();
+  let msg = '';
+  await ref.transaction((cur) => {
+    if (cur === null) return null;
+    if (on) {
+      if (cur.frozenAt) return;
+      // đang bảo trì toàn hệ thống thì tính từ lúc bắt đầu bảo trì
+      cur.frozenAt = freeze ? freeze.since : now;
+      return cur;
+    }
+    if (!cur.frozenAt) return;
+    if (cur.activatedAt && cur.expiresAt && cur.expiresAt > cur.frozenAt) {
+      const end = freeze ? freeze.since : now; // phần còn lại do rã đông toàn hệ thống cộng
+      const add = end - Math.max(cur.frozenAt, cur.activatedAt);
+      if (add > 0) cur.expiresAt += add;
+    }
+    cur.frozenAt = null;
+    return cur;
+  });
+  return msg ? { message: msg } : {};
+});
+
+// Bù thêm thời gian cho 1 key: {key, hours}
+adminKeyAction('extend', async (ref, body) => {
+  const hours = Number(body.hours);
+  if (!(hours > 0 && hours <= 24 * 365)) return { ok: false, message: 'Số giờ phải từ 0 đến 8760' };
+  const ms = Math.round(hours * H);
+  const now = Date.now();
+  await ref.transaction((cur) => {
+    if (cur === null) return null;
+    if (cur.activatedAt && cur.expiresAt) cur.expiresAt = Math.max(cur.expiresAt, now) + ms;
+    else cur.bonusMs = (cur.bonusMs || 0) + ms; // chưa kích hoạt: cộng khi kích hoạt
+    return cur;
+  });
+});
+
+// Đóng băng / rã đông TẤT CẢ key (bảo trì): {on}
+app.post('/api/admin/freeze-all', adminAuth, async (req, res) => {
+  const on = !!req.body.on;
+  const now = Date.now();
+  try {
+    const freeze = await getFreeze();
+    if (on) {
+      if (freeze) return res.json({ ok: true, message: 'Đang đóng băng rồi' });
+      await db.ref('config/freeze').set({ since: now });
+      return res.json({ ok: true });
+    }
+    if (!freeze) return res.json({ ok: true, message: 'Chưa đóng băng' });
+    const snap = await db.ref('keys').once('value');
+    const updates = {};
+    let n = 0;
+    snap.forEach((c) => {
+      const v = c.val();
+      if (!v.activatedAt || !v.expiresAt) return;
+      if (v.frozenAt) return; // key đóng băng riêng sẽ tự bù khi rã đông
+      if (v.expiresAt <= freeze.since) return; // đã hết hạn từ trước khi bảo trì
+      const add = now - Math.max(freeze.since, v.activatedAt);
+      if (add > 0) { updates['keys/' + c.key + '/expiresAt'] = v.expiresAt + add; n++; }
+    });
+    updates['config/freeze'] = null;
+    await db.ref().update(updates);
+    res.json({ ok: true, adjusted: n, addedMs: now - freeze.since });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, message: 'Lỗi server' });
+  }
+});
+
+// Bù thêm thời gian cho TẤT CẢ key đang hoạt động (chưa hết hạn): {hours}
+app.post('/api/admin/extend-all', adminAuth, async (req, res) => {
+  const hours = Number(req.body.hours);
+  if (!(hours > 0 && hours <= 24 * 365)) return res.json({ ok: false, message: 'Số giờ phải từ 0 đến 8760' });
+  const ms = Math.round(hours * H);
+  const now = Date.now();
+  try {
+    const snap = await db.ref('keys').once('value');
+    const updates = {};
+    let n = 0;
+    snap.forEach((c) => {
+      const v = c.val();
+      if (!v.activatedAt || !v.expiresAt || v.expiresAt <= now) return;
+      updates['keys/' + c.key + '/expiresAt'] = v.expiresAt + ms;
+      n++;
+    });
+    if (n) await db.ref().update(updates);
+    res.json({ ok: true, adjusted: n });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, message: 'Lỗi server' });
+  }
+});
+
+// ===== Vượt link lấy key miễn phí (vượt 2 link liên tiếp, key 6 giờ, 1 thiết bị) =====
 // Luồng: /get (bấm Lấy key) -> link rút gọn 1 -> /claim -> link rút gọn 2 -> /claim -> server tạo key.
 // Biến môi trường (tùy chọn):
 //   SHORTENER_API_URL  : URL API của web rút gọn, có chỗ {url}
 //   SITE_URL           : link web của bạn
 //   FREE_KEY_DURATION  : 6h | 1d | 3d | 7d | 30d (mặc định 6h)
+//   FREE_KEY_DEVICES   : số thiết bị của key vượt link (mặc định 1)
 //   MIN_SECONDS        : số giây tối thiểu mỗi lần vượt link (mặc định 25)
 //   IP_COOLDOWN_HOURS  : mỗi IP nhận 1 key / bao nhiêu giờ (mặc định 24, 0 = không giới hạn)
 //   STRICT_IP          : 1 = bắt buộc cùng IP lúc bấm và lúc nhận key (mặc định tắt)
 const SHORTENER_API_URL = process.env.SHORTENER_API_URL || 'https://link4m.co/api-shorten/v2?api=6a41f075234afd17497b7953&url={url}';
 const SITE_URL = (process.env.SITE_URL || 'https://key-server-p865.onrender.com').replace(/\/+$/, '');
 const FREE_KEY_DURATION = DURATIONS[process.env.FREE_KEY_DURATION] ? process.env.FREE_KEY_DURATION : '6h';
+const FREE_KEY_DEVICES = Math.max(parseInt(process.env.FREE_KEY_DEVICES || '1', 10) || 1, 1);
 const MIN_SECONDS = parseInt(process.env.MIN_SECONDS || '25', 10);
 const IP_COOLDOWN_HOURS = parseFloat(process.env.IP_COOLDOWN_HOURS || '24');
 const STRICT_IP = process.env.STRICT_IP === '1';
@@ -346,6 +497,7 @@ app.get('/api/gate/info', (req, res) => {
     ok: true,
     configured: !!SHORTENER_API_URL,
     duration: FREE_KEY_DURATION,
+    devices: FREE_KEY_DEVICES,
     steps: GATE_STEPS,
     cooldownHours: IP_COOLDOWN_HOURS,
   });
@@ -447,6 +599,7 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
       try {
         await db.ref('keys/' + result.key).set({
           duration: FREE_KEY_DURATION,
+          maxDevices: FREE_KEY_DEVICES,
           note: 'free-gate',
           status: 'active',
           createdAt: now,
