@@ -28,6 +28,7 @@
     <li>Vượt link thứ nhất, trang tự quay về rồi chuyển sang link thứ hai.</li>
     <li>Vượt xong link thứ hai, trang hiện key của bạn.</li>
   </ol>
+  <p id="cool" style="margin:0 0 14px"></p>
   <button id="btn">Lấy key</button>
   <div id="msg"></div>
   <p style="margin:16px 0 0;font-size:13px">Đã có key mà đổi máy? <a href="/">Reset thiết bị</a></p>
@@ -36,17 +37,31 @@
 const $ = (id) => document.getElementById(id);
 const LABEL = { '6h': '6 giờ', '1d': '1 ngày', '3d': '3 ngày', '7d': '7 ngày', '30d': '30 ngày' };
 
-fetch('/api/gate/info').then((r) => r.json()).then((d) => {
+function getCid() {
+  let c = '';
+  try { c = localStorage.getItem('cid') || ''; } catch (e) {}
+  if (!/^[a-f0-9]{32}$/.test(c)) {
+    c = Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('');
+    try { localStorage.setItem('cid', c); } catch (e) {}
+  }
+  return c;
+}
+const cid = getCid();
+
+fetch('/api/gate/info?cid=' + cid).then((r) => r.json()).then((d) => {
+  if (d.cooldownHours) $('cool').textContent = 'Mỗi lần nhận key phải chờ ' + d.cooldownHours + ' giờ mới vượt link lấy key mới.';
+  if (d.waitMs > 0) { $('msg').textContent = d.waitMessage; $('btn').disabled = true; }
   $('dur').textContent = LABEL[d.duration] || d.duration;
   if (d.steps) $('steps').textContent = d.steps;
   if (d.devices) $('devs').textContent = d.devices;
   if (!d.configured) { $('msg').textContent = 'Chức năng này chưa được bật.'; $('btn').disabled = true; }
+  if (d.waitMs > 0) { $('btn').disabled = true; }
 }).catch(() => {});
 
 $('btn').onclick = async () => {
   $('msg').textContent = ''; $('btn').disabled = true; $('btn').textContent = 'Đang tạo link...';
   try {
-    const r = await fetch('/api/gate/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const r = await fetch('/api/gate/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cid }) });
     const d = await r.json();
     if (d.ok) { location.href = d.url; return; }
     $('msg').textContent = d.message || 'Có lỗi, thử lại sau.';

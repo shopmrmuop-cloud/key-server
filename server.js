@@ -445,14 +445,14 @@ app.post('/api/admin/extend-all', adminAuth, async (req, res) => {
 //   FREE_KEY_DURATION  : 6h | 1d | 3d | 7d | 30d (mặc định 6h)
 //   FREE_KEY_DEVICES   : số thiết bị của key vượt link (mặc định 1)
 //   MIN_SECONDS        : số giây tối thiểu mỗi lần vượt link (mặc định 25)
-//   IP_COOLDOWN_HOURS  : mỗi IP nhận 1 key / bao nhiêu giờ (mặc định 24, 0 = không giới hạn)
+//   IP_COOLDOWN_HOURS  : chờ bao nhiêu giờ mới được vượt link lấy key lại (mặc định 5, 0 = không giới hạn)
 //   STRICT_IP          : 1 = bắt buộc cùng IP lúc bấm và lúc nhận key (mặc định tắt)
 const SHORTENER_API_URL = process.env.SHORTENER_API_URL || 'https://link4m.co/api-shorten/v2?api=6a41f075234afd17497b7953&url={url}';
 const SITE_URL = (process.env.SITE_URL || 'https://key-server-p865.onrender.com').replace(/\/+$/, '');
 const FREE_KEY_DURATION = DURATIONS[process.env.FREE_KEY_DURATION] ? process.env.FREE_KEY_DURATION : '6h';
 const FREE_KEY_DEVICES = Math.max(parseInt(process.env.FREE_KEY_DEVICES || '1', 10) || 1, 1);
 const MIN_SECONDS = parseInt(process.env.MIN_SECONDS || '25', 10);
-const IP_COOLDOWN_HOURS = parseFloat(process.env.IP_COOLDOWN_HOURS || '24');
+const IP_COOLDOWN_HOURS = parseFloat(process.env.IP_COOLDOWN_HOURS || '5');
 const STRICT_IP = process.env.STRICT_IP === '1';
 const SESSION_TTL = 60 * 60 * 1000;
 const GATE_STEPS = 2;
@@ -492,7 +492,32 @@ async function makeShortLink(dest) {
   return link;
 }
 
-app.get('/api/gate/info', (req, res) => {
+function cidHashOf(cid) {
+  cid = String(cid || '');
+  return /^[a-f0-9]{32}$/.test(cid) ? sha('c' + cid) : null;
+}
+// Thời gian (ms) còn phải chờ trước khi được vượt link lại: tính theo cả IP lẫn trình duyệt
+async function cooldownWait(ipHash, cidHash) {
+  if (IP_COOLDOWN_HOURS <= 0) return 0;
+  const refs = [db.ref('ipcool/' + ipHash)];
+  if (cidHash) refs.push(db.ref('ipcool/' + cidHash));
+  const vals = await Promise.all(refs.map((r) => r.once('value')));
+  let wait = 0;
+  for (const v of vals) {
+    const last = v.val();
+    if (last) wait = Math.max(wait, last + IP_COOLDOWN_HOURS * H - Date.now());
+  }
+  return wait;
+}
+function waitMessage(wait) {
+  const mins = Math.ceil(wait / 60000);
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return 'Bạn đã nhận key rồi. Có thể vượt link lấy key mới sau ' + (h ? h + ' giờ ' : '') + m + ' phút nữa.';
+}
+
+app.get('/api/gate/info', async (req, res) => {
+  let waitMs = 0;
+  try { waitMs = await cooldownWait(sha(clientIp(req)), cidHashOf(req.query.cid)); } catch (e) { console.error(e); }
   res.json({
     ok: true,
     configured: !!SHORTENER_API_URL,
@@ -500,6 +525,8 @@ app.get('/api/gate/info', (req, res) => {
     devices: FREE_KEY_DEVICES,
     steps: GATE_STEPS,
     cooldownHours: IP_COOLDOWN_HOURS,
+    waitMs,
+    waitMessage: waitMs > 0 ? waitMessage(waitMs) : '',
   });
 });
 
@@ -507,14 +534,9 @@ app.post('/api/gate/start', rateLimit(10, 60 * 1000), async (req, res) => {
   try {
     if (!SHORTENER_API_URL) return res.json({ ok: false, message: 'Admin chưa cài link vượt (SHORTENER_API_URL).' });
     const ipHash = sha(clientIp(req));
-    if (IP_COOLDOWN_HOURS > 0) {
-      const last = (await db.ref('ipcool/' + ipHash).once('value')).val();
-      const wait = last ? last + IP_COOLDOWN_HOURS * H - Date.now() : 0;
-      if (wait > 0) {
-        const hours = Math.ceil((wait / H) * 10) / 10;
-        return res.json({ ok: false, message: 'Mạng của bạn vừa nhận key rồi. Thử lại sau ' + hours + ' giờ.' });
-      }
-    }
+    const cidHash = cidHashOf(req.body.cid);
+    const wait = await cooldownWait(ipHash, cidHash);
+    if (wait > 0) return res.json({ ok: false, message: waitMessage(wait) });
     const token = crypto.randomBytes(16).toString('hex');
     const now = Date.now();
     await db.ref('sessions/' + token).set({
@@ -522,6 +544,7 @@ app.post('/api/gate/start', rateLimit(10, 60 * 1000), async (req, res) => {
       stage: 1,
       stageAt: now,
       ipHash,
+      cidHash,
       uaHash: sha(req.get('user-agent') || ''),
       used: false,
     });
@@ -547,6 +570,7 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
   const newT2 = crypto.randomBytes(16).toString('hex');
   const TOO_FAST = { ok: false, code: 'TOO_FAST', message: 'Bạn vượt link quá nhanh. Hãy làm đủ các bước trên trang vượt link rồi thử lại.' };
   let result = { ok: false, message: 'Link không tồn tại hoặc đã hết hạn.' };
+  let sessCid = null;
   try {
     await db.ref('sessions/' + t).transaction((cur) => {
       if (cur === null) { result = { ok: false, message: 'Link không tồn tại hoặc đã hết hạn.' }; return null; }
@@ -579,6 +603,7 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
       cur.used = true;
       cur.key = newKey;
       cur.usedAt = now;
+      sessCid = cur.cidHash || null;
       result = { ok: true, key: newKey, created: true };
       return cur;
     });
@@ -605,7 +630,10 @@ app.post('/api/gate/claim', rateLimit(20, 60 * 1000), async (req, res) => {
           createdAt: now,
           resetCount: 0,
         });
-        if (IP_COOLDOWN_HOURS > 0) await db.ref('ipcool/' + ipHash).set(now);
+        if (IP_COOLDOWN_HOURS > 0) {
+          await db.ref('ipcool/' + ipHash).set(now);
+          if (sessCid) await db.ref('ipcool/' + sessCid).set(now);
+        }
       } catch (e) {
         await db.ref('sessions/' + t).update({ used: false, key: null }).catch(() => {});
         throw e;
